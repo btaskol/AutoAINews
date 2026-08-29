@@ -11,6 +11,10 @@ export default {
       return handleAskQuestion(request, env);
     }
 
+    if (url.pathname === "/api/summarize" && request.method === "POST") {
+      return handleSummarize(request, env);
+    }
+
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ status: "ok" }), {
         headers: { "Content-Type": "application/json" },
@@ -117,6 +121,26 @@ async function summarizeWithGrok(text, env) {
     console.error("Grok API error:", error);
     return "Error summarizing";
   }
+}
+
+async function handleSummarize(request, env) {
+  const { text } = await request.json();
+
+  if (!text) {
+    return new Response(JSON.stringify({ error: "Missing text" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const summary = await summarizeWithGrok(text, env);
+  
+  return new Response(JSON.stringify({ summary }), {
+    headers: { 
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
 }
 
 async function handleAskQuestion(request, env) {

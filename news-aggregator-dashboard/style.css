@@ -36,13 +36,6 @@ header p {
   font-size: 16px;
 }
 
-.controls {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 30px;
-  align-items: center;
-}
-
 .btn {
   padding: 12px 24px;
   border: none;
@@ -63,6 +56,28 @@ header p {
   transform: translateY(-2px);
 }
 
+.btn-success {
+  background: #27ae60;
+  color: white;
+  padding: 10px 20px;
+}
+
+.btn-success:hover {
+  background: #229954;
+}
+
+.btn-danger {
+  background: #e74c3c;
+  color: white;
+  padding: 8px 16px;
+  font-size: 12px;
+  margin-left: 10px;
+}
+
+.btn-danger:hover {
+  background: #c0392b;
+}
+
 .btn-ask {
   background: #27ae60;
   color: white;
@@ -77,6 +92,82 @@ header p {
 .status {
   color: white;
   font-size: 14px;
+  margin-left: 15px;
+}
+
+/* Feed Manager Section */
+.feed-manager {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 30px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+.feed-input-group {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.feed-input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border 0.3s;
+}
+
+.feed-input:focus {
+  outline: none;
+  border-color: #3498db;
+  box-shadow: 0 0 5px rgba(52, 152, 219, 0.3);
+}
+
+.feeds-list {
+  margin-top: 20px;
+}
+
+.feeds-list h3 {
+  font-size: 14px;
+  color: #2c3e50;
+  margin-bottom: 15px;
+  font-weight: 600;
+}
+
+.feeds-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.feed-tag {
+  background: #ecf0f1;
+  padding: 10px 15px;
+  border-radius: 20px;
+  font-size: 13px;
+  color: #2c3e50;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 3px solid #3498db;
+}
+
+.feed-tag-url {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.controls {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 30px;
+  align-items: center;
 }
 
 .articles {
@@ -209,7 +300,19 @@ header p {
     padding: 20px;
   }
 
+  header h1 {
+    font-size: 24px;
+  }
+
+  .article-card {
+    padding: 15px;
+  }
+
   .qa-input-group {
+    flex-direction: column;
+  }
+
+  .feed-input-group {
     flex-direction: column;
   }
 }

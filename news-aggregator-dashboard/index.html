@@ -15,6 +15,25 @@
 
     <div id="error" class="error" style="display: none;"></div>
     
+    <!-- Feed Management Section -->
+    <div class="feed-manager">
+      <div class="feed-input-group">
+        <input 
+          type="url" 
+          id="feedInput" 
+          placeholder="Enter RSS feed URL (e.g., https://feeds.example.com/rss)" 
+          class="feed-input"
+        >
+        <button id="addFeedBtn" class="btn btn-success">Add Feed</button>
+      </div>
+
+      <div class="feeds-list">
+        <h3>Active Feeds:</h3>
+        <div id="feedsList" class="feeds-container"></div>
+      </div>
+    </div>
+
+    <!-- Articles Loading Section -->
     <div class="controls">
       <button id="loadBtn" class="btn btn-primary">Load Articles</button>
       <span id="status" class="status"></span>
