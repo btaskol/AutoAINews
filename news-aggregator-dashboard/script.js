@@ -1,4 +1,4 @@
-const WORKER_URL = "https://news-aggregator-worker.YOUR_USERNAME.workers.dev";
+const WORKER_URL = "https://news-aggregator-worker.berkaytaskol.workers.dev";
 
 let allArticles = [];
 
