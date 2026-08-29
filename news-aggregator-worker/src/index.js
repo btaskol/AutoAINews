@@ -31,46 +31,45 @@ export default {
   },
 };
 
-async function handleGetArticles(request, env) {
-  const RSS_FEEDS = [
-    "https://feeds.thehackernews.com/feed.xml",
-    "https://www.bbc.com/news/rss.xml",
-    "https://feeds.techcrunch.com/",
-  ];
+async function handleFetchFeeds(request, env) {
+  const { feeds } = await request.json();
+
+  if (!feeds || feeds.length === 0) {
+    return new Response(JSON.stringify({ error: "No feeds provided", articles: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
 
   const articles = [];
 
-  for (const feed of RSS_FEEDS) {
-    const fetchedArticles = await fetchFeedOrUrl(feed, env);
-    articles.push(...fetchedArticles);
+  for (const feed of feeds) {
+    try {
+      console.log(`Fetching feed: ${feed}`);
+      const response = await fetch(feed);
+      const text = await response.text();
+
+      if (text.includes('<?xml') || text.includes('<rss') || text.includes('<feed')) {
+        const rssArticles = parseRssFeed(text, feed);
+        console.log(`Found ${rssArticles.length} articles in ${feed}`);
+        articles.push(...rssArticles);
+      }
+    } catch (error) {
+      console.error(`Error fetching ${feed}:`, error);
+    }
+  }
+
+  console.log(`Total articles found: ${articles.length}`);
+
+  // Summarize all articles
+  for (let article of articles) {
+    article.summary = await summarizeWithGrok(article.description, env);
   }
 
   return new Response(JSON.stringify(articles), {
-    headers: { 
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
+    status: 200,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
   });
-}
-
-async function fetchFeedOrUrl(sourceUrl, env) {
-  const articles = [];
-
-  try {
-    const response = await fetch(sourceUrl);
-    const text = await response.text();
-
-    // Check if it's RSS/XML
-    if (text.includes('<?xml') || text.includes('<rss') || text.includes('<feed')) {
-      return parseRssFeed(text, sourceUrl);
-    } else {
-      // It's a regular HTML page - extract articles
-      return parseHtmlPage(text, sourceUrl, env);
-    }
-  } catch (error) {
-    console.error(`Error fetching ${sourceUrl}:`, error);
-    return [];
-  }
 }
 
 function parseRssFeed(text, sourceUrl) {
@@ -81,63 +80,28 @@ function parseRssFeed(text, sourceUrl) {
   const descMatches = text.match(/<description>([^<]+)<\/description>/g) || [];
 
   for (let i = 1; i < Math.min(4, titleMatches.length); i++) {
-    const title = titleMatches[i]
-      .replace(/<title>|<\/title>/g, "")
-      .substring(0, 200);
-    const link = linkMatches[i]
-      ?.replace(/<link>|<\/link>/g, "")
-      .trim() || "";
-    const description = descMatches[i]
-      ?.replace(/<description>|<\/description>/g, "")
-      .substring(0, 500) || "No description";
+    try {
+      const title = titleMatches[i]?.replace(/<title>|<\/title>/g, "").substring(0, 200);
+      const link = linkMatches[i]?.replace(/<link>|<\/link>/g, "").trim() || "";
+      const description = descMatches[i]?.replace(/<description>|<\/description>/g, "").substring(0, 500) || "No description";
 
-    articles.push({
-      id: Math.random().toString(36).substr(2, 9),
-      title,
-      link,
-      description,
-      source: new URL(sourceUrl).hostname,
-      timestamp: new Date().toISOString(),
-      summary: "Summarizing...",
-    });
+      if (title && title.length > 3) {
+        articles.push({
+          id: Math.random().toString(36).substr(2, 9),
+          title: title.trim(),
+          link: link.trim(),
+          description: description.trim(),
+          source: new URL(sourceUrl).hostname,
+          timestamp: new Date().toISOString(),
+          summary: "Summarizing...",
+        });
+      }
+    } catch (e) {
+      console.error("Error parsing article:", e);
+    }
   }
 
   return articles;
-}
-
-function parseHtmlPage(text, sourceUrl, env) {
-  const articles = [];
-
-  // Extract article-like content from HTML
-  const h2Matches = text.match(/<h2[^>]*>([^<]+)<\/h2>/g) || [];
-  const h3Matches = text.match(/<h3[^>]*>([^<]+)<\/h3>/g) || [];
-
-  const headlines = [
-    ...h2Matches.slice(0, 2).map(h => h.replace(/<h2[^>]*>|<\/h2>/g, "")),
-    ...h3Matches.slice(0, 2).map(h => h.replace(/<h3[^>]*>|<\/h3>/g, "")),
-  ].slice(0, 3);
-
-  headlines.forEach((title, idx) => {
-    articles.push({
-      id: Math.random().toString(36).substr(2, 9),
-      title: title.substring(0, 200),
-      link: sourceUrl,
-      description: `Article from ${new URL(sourceUrl).hostname}`,
-      source: new URL(sourceUrl).hostname,
-      timestamp: new Date().toISOString(),
-      summary: "Summarizing...",
-    });
-  });
-
-  return articles.length > 0 ? articles : [{
-    id: Math.random().toString(36).substr(2, 9),
-    title: `Latest from ${new URL(sourceUrl).hostname}`,
-    link: sourceUrl,
-    description: "Visit the website for latest news",
-    source: new URL(sourceUrl).hostname,
-    timestamp: new Date().toISOString(),
-    summary: "Please visit the site directly for latest content",
-  }];
 }
 
 async function summarizeWithGrok(text, env) {
@@ -170,7 +134,7 @@ async function summarizeWithGrok(text, env) {
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    return data.choices[0].message.content || "Unable to summarize";
   } catch (error) {
     console.error("Grok API error:", error);
     return "Error summarizing";
@@ -197,26 +161,22 @@ async function handleSummarize(request, env) {
   });
 }
 
-async function handleFetchFeeds(request, env) {
-  const { feeds } = await request.json();
-
-  if (!feeds || feeds.length === 0) {
-    return new Response(JSON.stringify({ error: "No feeds provided" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+async function handleGetArticles(request, env) {
+  const RSS_FEEDS = [
+    "https://feeds.thehackernews.com/feed.xml",
+    "https://www.bbc.com/news/rss.xml",
+    "https://feeds.techcrunch.com/",
+  ];
 
   const articles = [];
 
-  for (const feed of feeds) {
+  for (const feed of RSS_FEEDS) {
     try {
       const response = await fetch(feed);
       const text = await response.text();
 
-      // Check if it's RSS/XML
       if (text.includes('<?xml') || text.includes('<rss') || text.includes('<feed')) {
-        const rssArticles = parseRssFeedWorker(text, feed);
+        const rssArticles = parseRssFeed(text, feed);
         articles.push(...rssArticles);
       }
     } catch (error) {
@@ -224,53 +184,19 @@ async function handleFetchFeeds(request, env) {
     }
   }
 
-  // Summarize all articles
-  for (let article of articles) {
-    if (article.summary === "Summarizing...") {
-      article.summary = await summarizeWithGrok(article.description, env);
-    }
-  }
+  const articlesWithSummaries = await Promise.all(
+    articles.map(async (article) => {
+      const summary = await summarizeWithGrok(article.description, env);
+      return { ...article, summary };
+    })
+  );
 
-  return new Response(JSON.stringify(articles), {
+  return new Response(JSON.stringify(articlesWithSummaries), {
     headers: { 
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
     },
   });
-}
-
-function parseRssFeedWorker(text, sourceUrl) {
-  const articles = [];
-
-  const titleMatches = text.match(/<title>([^<]+)<\/title>/g) || [];
-  const linkMatches = text.match(/<link>([^<]+)<\/link>/g) || [];
-  const descMatches = text.match(/<description>([^<]+)<\/description>/g) || [];
-
-  for (let i = 1; i < Math.min(4, titleMatches.length); i++) {
-    const title = titleMatches[i]
-      .replace(/<title>|<\/title>/g, "")
-      .substring(0, 200);
-    const link = linkMatches[i]
-      ?.replace(/<link>|<\/link>/g, "")
-      .trim() || "";
-    const description = descMatches[i]
-      ?.replace(/<description>|<\/description>/g, "")
-      .substring(0, 500) || "No description";
-
-    if (title && title.length > 5) {
-      articles.push({
-        id: Math.random().toString(36).substr(2, 9),
-        title,
-        link,
-        description,
-        source: new URL(sourceUrl).hostname,
-        timestamp: new Date().toISOString(),
-        summary: "Summarizing...",
-      });
-    }
-  }
-
-  return articles;
 }
 
 async function handleAskQuestion(request, env) {
