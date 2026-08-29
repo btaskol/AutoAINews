@@ -15,6 +15,10 @@ export default {
       return handleSummarize(request, env);
     }
 
+    if (url.pathname === "/api/fetch-feeds" && request.method === "POST") {
+      return handleFetchFeeds(request, env);
+    }
+
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ status: "ok" }), {
         headers: { "Content-Type": "application/json" },
@@ -105,13 +109,9 @@ function parseHtmlPage(text, sourceUrl, env) {
   const articles = [];
 
   // Extract article-like content from HTML
-  // Look for common patterns: h1/h2 tags, article tags, links with titles
-  
   const h2Matches = text.match(/<h2[^>]*>([^<]+)<\/h2>/g) || [];
   const h3Matches = text.match(/<h3[^>]*>([^<]+)<\/h3>/g) || [];
-  const linkMatches = text.match(/<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g) || [];
 
-  // Combine and limit to 3 articles
   const headlines = [
     ...h2Matches.slice(0, 2).map(h => h.replace(/<h2[^>]*>|<\/h2>/g, "")),
     ...h3Matches.slice(0, 2).map(h => h.replace(/<h3[^>]*>|<\/h3>/g, "")),
@@ -195,6 +195,82 @@ async function handleSummarize(request, env) {
       "Access-Control-Allow-Origin": "*",
     },
   });
+}
+
+async function handleFetchFeeds(request, env) {
+  const { feeds } = await request.json();
+
+  if (!feeds || feeds.length === 0) {
+    return new Response(JSON.stringify({ error: "No feeds provided" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const articles = [];
+
+  for (const feed of feeds) {
+    try {
+      const response = await fetch(feed);
+      const text = await response.text();
+
+      // Check if it's RSS/XML
+      if (text.includes('<?xml') || text.includes('<rss') || text.includes('<feed')) {
+        const rssArticles = parseRssFeedWorker(text, feed);
+        articles.push(...rssArticles);
+      }
+    } catch (error) {
+      console.error(`Error fetching ${feed}:`, error);
+    }
+  }
+
+  // Summarize all articles
+  for (let article of articles) {
+    if (article.summary === "Summarizing...") {
+      article.summary = await summarizeWithGrok(article.description, env);
+    }
+  }
+
+  return new Response(JSON.stringify(articles), {
+    headers: { 
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
+function parseRssFeedWorker(text, sourceUrl) {
+  const articles = [];
+
+  const titleMatches = text.match(/<title>([^<]+)<\/title>/g) || [];
+  const linkMatches = text.match(/<link>([^<]+)<\/link>/g) || [];
+  const descMatches = text.match(/<description>([^<]+)<\/description>/g) || [];
+
+  for (let i = 1; i < Math.min(4, titleMatches.length); i++) {
+    const title = titleMatches[i]
+      .replace(/<title>|<\/title>/g, "")
+      .substring(0, 200);
+    const link = linkMatches[i]
+      ?.replace(/<link>|<\/link>/g, "")
+      .trim() || "";
+    const description = descMatches[i]
+      ?.replace(/<description>|<\/description>/g, "")
+      .substring(0, 500) || "No description";
+
+    if (title && title.length > 5) {
+      articles.push({
+        id: Math.random().toString(36).substr(2, 9),
+        title,
+        link,
+        description,
+        source: new URL(sourceUrl).hostname,
+        timestamp: new Date().toISOString(),
+        summary: "Summarizing...",
+      });
+    }
+  }
+
+  return articles;
 }
 
 async function handleAskQuestion(request, env) {

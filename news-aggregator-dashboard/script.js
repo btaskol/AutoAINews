@@ -78,7 +78,7 @@ function deleteFeed(url) {
   }
 }
 
-// Load articles from selected feeds
+// Load articles from selected feeds - NOW USES WORKER
 async function loadArticles() {
   const loading = document.getElementById("loading");
   const articlesDiv = document.getElementById("articles");
@@ -111,8 +111,18 @@ async function loadArticles() {
   statusDiv.textContent = "Loading articles...";
 
   try {
-    const articles = await fetchCustomFeeds(selectedFeeds);
+    // Call Worker endpoint to fetch feeds
+    const response = await fetch(`${WORKER_URL}/api/fetch-feeds`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feeds: selectedFeeds }),
+    });
 
+    if (!response.ok) {
+      throw new Error(`Worker error: ${response.status}`);
+    }
+
+    const articles = await response.json();
     allArticles = articles;
     loading.style.display = "none";
     statusDiv.textContent = `Loaded ${allArticles.length} articles`;
@@ -141,130 +151,6 @@ async function loadArticles() {
     console.error("Error:", error);
   } finally {
     loadBtn.disabled = false;
-  }
-}
-
-// Fetch from custom feeds
-async function fetchCustomFeeds(feeds) {
-  const articles = [];
-
-  for (const feed of feeds) {
-    try {
-      const response = await fetch(feed);
-      const text = await response.text();
-
-      // Check if it's RSS/XML
-      if (text.includes('<?xml') || text.includes('<rss') || text.includes('<feed')) {
-        const rssArticles = parseRssFeed(text, feed);
-        articles.push(...rssArticles);
-      } else {
-        // It's HTML - extract articles
-        const htmlArticles = parseHtmlPage(text, feed);
-        articles.push(...htmlArticles);
-      }
-
-      // Summarize articles
-      for (let article of articles) {
-        if (article.summary === "Summarizing...") {
-          article.summary = await summarizeWithGrok(article.description);
-        }
-      }
-    } catch (error) {
-      console.error(`Error fetching ${feed}:`, error);
-    }
-  }
-
-  return articles;
-}
-
-// Parse RSS feed
-function parseRssFeed(text, sourceUrl) {
-  const articles = [];
-
-  const titleMatches = text.match(/<title>([^<]+)<\/title>/g) || [];
-  const linkMatches = text.match(/<link>([^<]+)<\/link>/g) || [];
-  const descMatches = text.match(/<description>([^<]+)<\/description>/g) || [];
-
-  for (let i = 1; i < Math.min(4, titleMatches.length); i++) {
-    const title = titleMatches[i]
-      .replace(/<title>|<\/title>/g, "")
-      .substring(0, 200);
-    const link = linkMatches[i]
-      ?.replace(/<link>|<\/link>/g, "")
-      .trim() || "";
-    const description = descMatches[i]
-      ?.replace(/<description>|<\/description>/g, "")
-      .substring(0, 500) || "No description";
-
-    if (title) {
-      articles.push({
-        id: Math.random().toString(36).substr(2, 9),
-        title,
-        link,
-        description,
-        source: new URL(sourceUrl).hostname,
-        timestamp: new Date().toISOString(),
-        summary: "Summarizing...",
-      });
-    }
-  }
-
-  return articles;
-}
-
-// Parse HTML page
-function parseHtmlPage(text, sourceUrl) {
-  const articles = [];
-
-  const h2Matches = text.match(/<h[1-3][^>]*>([^<]{10,})<\/h[1-3]>/g) || [];
-
-  h2Matches.slice(0, 3).forEach((heading) => {
-    const title = heading
-      .replace(/<h[1-3][^>]*>|<\/h[1-3]>/g, "")
-      .substring(0, 200);
-
-    if (title.length > 10) {
-      articles.push({
-        id: Math.random().toString(36).substr(2, 9),
-        title,
-        link: sourceUrl,
-        description: `Article from ${new URL(sourceUrl).hostname}`,
-        source: new URL(sourceUrl).hostname,
-        timestamp: new Date().toISOString(),
-        summary: "Summarizing...",
-      });
-    }
-  });
-
-  return articles.length > 0 ? articles : [{
-    id: Math.random().toString(36).substr(2, 9),
-    title: `Latest from ${new URL(sourceUrl).hostname}`,
-    link: sourceUrl,
-    description: "Visit the website for latest content",
-    source: new URL(sourceUrl).hostname,
-    timestamp: new Date().toISOString(),
-    summary: "Please visit the site directly for latest content",
-  }];
-}
-
-// Summarize with Grok
-async function summarizeWithGrok(text) {
-  if (!text || text.length < 10) return "No content to summarize";
-
-  try {
-    const response = await fetch(`${WORKER_URL}/api/summarize`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.substring(0, 1000) }),
-    });
-
-    if (!response.ok) return "Summarization failed";
-
-    const data = await response.json();
-    return data.summary || "Summarization failed";
-  } catch (error) {
-    console.error("Grok API error:", error);
-    return "Error summarizing";
   }
 }
 
