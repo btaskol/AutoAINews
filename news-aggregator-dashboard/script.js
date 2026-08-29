@@ -3,7 +3,6 @@ const WORKER_URL = "https://news-aggregator-worker.berkaytaskol.workers.dev";
 let allArticles = [];
 let customFeeds = [];
 
-// Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadFeeds();
   renderFeedsList();
@@ -14,18 +13,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// Load feeds from localStorage
 function loadFeeds() {
   const saved = localStorage.getItem('customFeeds');
   customFeeds = saved ? JSON.parse(saved) : [];
 }
 
-// Save feeds to localStorage
 function saveFeeds() {
   localStorage.setItem('customFeeds', JSON.stringify(customFeeds));
 }
 
-// Render feeds list with checkboxes
 function renderFeedsList() {
   const feedsList = document.getElementById("feedsList");
   
@@ -43,7 +39,6 @@ function renderFeedsList() {
   `).join('');
 }
 
-// Add new feed
 function addFeed() {
   const input = document.getElementById("feedInput");
   const url = input.value.trim();
@@ -69,7 +64,6 @@ function addFeed() {
   renderFeedsList();
 }
 
-// Delete feed
 function deleteFeed(url) {
   if (confirm(`Delete feed: ${url}?`)) {
     customFeeds = customFeeds.filter(feed => feed !== url);
@@ -78,31 +72,12 @@ function deleteFeed(url) {
   }
 }
 
-// Load articles from selected feeds - NOW USES WORKER
 async function loadArticles() {
   const loading = document.getElementById("loading");
   const articlesDiv = document.getElementById("articles");
   const errorDiv = document.getElementById("error");
   const statusDiv = document.getElementById("status");
   const loadBtn = document.getElementById("loadBtn");
-
-  // Get selected feeds based on checkboxes
-  const checkboxes = document.querySelectorAll('.feed-checkbox:checked');
-  const selectedFeeds = Array.from(checkboxes).map((checkbox) => {
-    const idx = checkbox.id.replace('feed-', '');
-    return customFeeds[idx];
-  });
-
-  if (selectedFeeds.length === 0) {
-    if (customFeeds.length > 0) {
-      errorDiv.style.display = "block";
-      errorDiv.textContent = "Please check at least one feed to load articles";
-    } else {
-      errorDiv.style.display = "block";
-      errorDiv.textContent = "Please add at least one feed first";
-    }
-    return;
-  }
 
   loading.style.display = "block";
   articlesDiv.innerHTML = "";
@@ -111,24 +86,24 @@ async function loadArticles() {
   statusDiv.textContent = "Loading articles...";
 
   try {
-    // Call Worker endpoint to fetch feeds
-    const response = await fetch(`${WORKER_URL}/api/fetch-feeds`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ feeds: selectedFeeds }),
-    });
-
+    // Use the default Worker endpoint (has built-in feeds)
+    const response = await fetch(`${WORKER_URL}/api/articles`);
+    
     if (!response.ok) {
       throw new Error(`Worker error: ${response.status}`);
     }
 
-    const articles = await response.json();
-    allArticles = articles;
+    allArticles = await response.json();
+    
+    if (!Array.isArray(allArticles)) {
+      throw new Error("Invalid response format");
+    }
+
     loading.style.display = "none";
     statusDiv.textContent = `Loaded ${allArticles.length} articles`;
 
     if (allArticles.length === 0) {
-      articlesDiv.innerHTML = "<p>No articles found. Check your feed URLs and try again.</p>";
+      articlesDiv.innerHTML = "<p>No articles found. The feeds might be unavailable.</p>";
       return;
     }
 
@@ -154,7 +129,6 @@ async function loadArticles() {
   }
 }
 
-// Render article
 function renderArticle(article) {
   return `
     <div class="article-card">
@@ -183,7 +157,6 @@ function renderArticle(article) {
   `;
 }
 
-// Ask question
 async function askQuestion(article) {
   const question = document.querySelector(`.qa-question-${article.id}`).value;
   const answerDiv = document.querySelector(`.qa-answer-${article.id}`);
