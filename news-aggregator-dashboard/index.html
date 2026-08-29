@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>News Aggregator with AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📰 News Aggregator</h1>
+      <p>Personalized news with AI summaries & Q&A</p>
+    </header>
+
+    <div id="error" class="error" style="display: none;"></div>
+    
+    <div class="controls">
+      <button id="loadBtn" class="btn btn-primary">Load Articles</button>
+      <span id="status" class="status"></span>
+    </div>
+
+    <div id="articles" class="articles"></div>
+    <div id="loading" class="loading" style="display: none;">Loading articles...</div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
