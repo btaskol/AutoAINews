@@ -21,21 +21,21 @@
         <input 
           type="url" 
           id="feedInput" 
-          placeholder="Enter RSS feed URL (e.g., https://feeds.example.com/rss)" 
+          placeholder="Enter RSS feed URL or website URL" 
           class="feed-input"
         >
         <button id="addFeedBtn" class="btn btn-success">Add Feed</button>
       </div>
 
       <div class="feeds-list">
-        <h3>Active Feeds:</h3>
+        <h3>Your Feeds (Check boxes to select which feeds to load):</h3>
         <div id="feedsList" class="feeds-container"></div>
       </div>
     </div>
 
     <!-- Articles Loading Section -->
     <div class="controls">
-      <button id="loadBtn" class="btn btn-primary">Load Articles</button>
+      <button id="loadBtn" class="btn btn-primary">Load Articles from Selected</button>
       <span id="status" class="status"></span>
     </div>
 

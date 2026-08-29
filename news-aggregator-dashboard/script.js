@@ -25,18 +25,19 @@ function saveFeeds() {
   localStorage.setItem('customFeeds', JSON.stringify(customFeeds));
 }
 
-// Render feeds list
+// Render feeds list with checkboxes
 function renderFeedsList() {
   const feedsList = document.getElementById("feedsList");
   
   if (customFeeds.length === 0) {
-    feedsList.innerHTML = '<p style="color: #999; font-size: 13px;">No custom feeds added yet. Add one above!</p>';
+    feedsList.innerHTML = '<p style="color: #999; font-size: 13px; padding: 10px;">No feeds added yet. Add a feed URL above!</p>';
     return;
   }
 
-  feedsList.innerHTML = customFeeds.map(feed => `
-    <div class="feed-tag">
-      <span class="feed-tag-url">${feed}</span>
+  feedsList.innerHTML = customFeeds.map((feed, idx) => `
+    <div class="feed-item">
+      <input type="checkbox" id="feed-${idx}" class="feed-checkbox" checked>
+      <label for="feed-${idx}">${feed}</label>
       <button class="btn btn-danger" onclick="deleteFeed('${feed.replace(/'/g, "\\'")}')">Delete</button>
     </div>
   `).join('');
@@ -48,7 +49,7 @@ function addFeed() {
   const url = input.value.trim();
 
   if (!url) {
-    alert("Please enter a valid URL");
+    alert("Please enter a URL");
     return;
   }
 
@@ -77,13 +78,31 @@ function deleteFeed(url) {
   }
 }
 
-// Load articles from custom feeds
+// Load articles from selected feeds
 async function loadArticles() {
   const loading = document.getElementById("loading");
   const articlesDiv = document.getElementById("articles");
   const errorDiv = document.getElementById("error");
   const statusDiv = document.getElementById("status");
   const loadBtn = document.getElementById("loadBtn");
+
+  // Get selected feeds based on checkboxes
+  const checkboxes = document.querySelectorAll('.feed-checkbox:checked');
+  const selectedFeeds = Array.from(checkboxes).map((checkbox) => {
+    const idx = checkbox.id.replace('feed-', '');
+    return customFeeds[idx];
+  });
+
+  if (selectedFeeds.length === 0) {
+    if (customFeeds.length > 0) {
+      errorDiv.style.display = "block";
+      errorDiv.textContent = "Please check at least one feed to load articles";
+    } else {
+      errorDiv.style.display = "block";
+      errorDiv.textContent = "Please add at least one feed first";
+    }
+    return;
+  }
 
   loading.style.display = "block";
   articlesDiv.innerHTML = "";
@@ -92,24 +111,14 @@ async function loadArticles() {
   statusDiv.textContent = "Loading articles...";
 
   try {
-    // If custom feeds exist, fetch from them; otherwise use default Worker feeds
-    let articles = [];
-    
-    if (customFeeds.length > 0) {
-      articles = await fetchCustomFeeds();
-    } else {
-      // Fall back to Worker default feeds
-      const response = await fetch(`${WORKER_URL}/api/articles`);
-      if (!response.ok) throw new Error(`Worker error: ${response.status}`);
-      articles = await response.json();
-    }
+    const articles = await fetchCustomFeeds(selectedFeeds);
 
     allArticles = articles;
     loading.style.display = "none";
     statusDiv.textContent = `Loaded ${allArticles.length} articles`;
 
     if (allArticles.length === 0) {
-      articlesDiv.innerHTML = "<p>No articles found. Try adding some feeds!</p>";
+      articlesDiv.innerHTML = "<p>No articles found. Check your feed URLs and try again.</p>";
       return;
     }
 
@@ -136,41 +145,25 @@ async function loadArticles() {
 }
 
 // Fetch from custom feeds
-async function fetchCustomFeeds() {
+async function fetchCustomFeeds(feeds) {
   const articles = [];
 
-  for (const feed of customFeeds) {
+  for (const feed of feeds) {
     try {
       const response = await fetch(feed);
       const text = await response.text();
 
-      const titleMatches = text.match(/<title>([^<]+)<\/title>/g) || [];
-      const linkMatches = text.match(/<link>([^<]+)<\/link>/g) || [];
-      const descMatches = text.match(/<description>([^<]+)<\/description>/g) || [];
-
-      for (let i = 0; i < Math.min(3, titleMatches.length); i++) {
-        const title = titleMatches[i]
-          .replace(/<title>|<\/title>/g, "")
-          .substring(0, 200);
-        const link = linkMatches[i]
-          ?.replace(/<link>|<\/link>/g, "")
-          .trim() || "";
-        const description = descMatches[i]
-          ?.replace(/<description>|<\/description>/g, "")
-          .substring(0, 500) || "No description";
-
-        articles.push({
-          id: Math.random().toString(36).substr(2, 9),
-          title,
-          link,
-          description,
-          source: new URL(feed).hostname,
-          timestamp: new Date().toISOString(),
-          summary: "Summarizing...",
-        });
+      // Check if it's RSS/XML
+      if (text.includes('<?xml') || text.includes('<rss') || text.includes('<feed')) {
+        const rssArticles = parseRssFeed(text, feed);
+        articles.push(...rssArticles);
+      } else {
+        // It's HTML - extract articles
+        const htmlArticles = parseHtmlPage(text, feed);
+        articles.push(...htmlArticles);
       }
 
-      // Summarize articles with Grok
+      // Summarize articles
       for (let article of articles) {
         if (article.summary === "Summarizing...") {
           article.summary = await summarizeWithGrok(article.description);
@@ -182,6 +175,76 @@ async function fetchCustomFeeds() {
   }
 
   return articles;
+}
+
+// Parse RSS feed
+function parseRssFeed(text, sourceUrl) {
+  const articles = [];
+
+  const titleMatches = text.match(/<title>([^<]+)<\/title>/g) || [];
+  const linkMatches = text.match(/<link>([^<]+)<\/link>/g) || [];
+  const descMatches = text.match(/<description>([^<]+)<\/description>/g) || [];
+
+  for (let i = 1; i < Math.min(4, titleMatches.length); i++) {
+    const title = titleMatches[i]
+      .replace(/<title>|<\/title>/g, "")
+      .substring(0, 200);
+    const link = linkMatches[i]
+      ?.replace(/<link>|<\/link>/g, "")
+      .trim() || "";
+    const description = descMatches[i]
+      ?.replace(/<description>|<\/description>/g, "")
+      .substring(0, 500) || "No description";
+
+    if (title) {
+      articles.push({
+        id: Math.random().toString(36).substr(2, 9),
+        title,
+        link,
+        description,
+        source: new URL(sourceUrl).hostname,
+        timestamp: new Date().toISOString(),
+        summary: "Summarizing...",
+      });
+    }
+  }
+
+  return articles;
+}
+
+// Parse HTML page
+function parseHtmlPage(text, sourceUrl) {
+  const articles = [];
+
+  const h2Matches = text.match(/<h[1-3][^>]*>([^<]{10,})<\/h[1-3]>/g) || [];
+
+  h2Matches.slice(0, 3).forEach((heading) => {
+    const title = heading
+      .replace(/<h[1-3][^>]*>|<\/h[1-3]>/g, "")
+      .substring(0, 200);
+
+    if (title.length > 10) {
+      articles.push({
+        id: Math.random().toString(36).substr(2, 9),
+        title,
+        link: sourceUrl,
+        description: `Article from ${new URL(sourceUrl).hostname}`,
+        source: new URL(sourceUrl).hostname,
+        timestamp: new Date().toISOString(),
+        summary: "Summarizing...",
+      });
+    }
+  });
+
+  return articles.length > 0 ? articles : [{
+    id: Math.random().toString(36).substr(2, 9),
+    title: `Latest from ${new URL(sourceUrl).hostname}`,
+    link: sourceUrl,
+    description: "Visit the website for latest content",
+    source: new URL(sourceUrl).hostname,
+    timestamp: new Date().toISOString(),
+    summary: "Please visit the site directly for latest content",
+  }];
 }
 
 // Summarize with Grok
