@@ -1,48 +1,256 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>News Aggregator with AI</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<title>AI News Intelligence</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px;color:#333;margin:0;min-height:100vh}
+  .container{max-width:850px;margin:0 auto;background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 10px rgba(0,0,0,.1)}
+  .topic-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:25px}
+  .topic-card{border:2px solid #e9ecef;border-radius:8px;padding:12px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:all .2s ease;user-select:none}
+  .topic-card:hover{border-color:#0d6efd;background:#f8f9fa}
+  .topic-card.active{border-color:#0d6efd;background:#e7f1ff}
+  .topic-card input{width:18px;height:18px;cursor:pointer}
+  .input-group{display:flex;gap:10px;margin-bottom:10px}
+  input[type="text"]{flex:1;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:15px}
+  button{padding:10px 16px;cursor:pointer;border:none;border-radius:6px;font-weight:bold;color:#fff;background:#0d6efd}
+  button.success{background:#28a745} button.danger{background:#dc3545} button.ai{background:#6f42c1} button.secondary{background:#6c757d}
+  .card{border:1px solid #eee;padding:20px;margin-bottom:15px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,.05)}
+  .ai-box{background:#f8f9fa;padding:15px;margin-top:15px;border-radius:8px;border:1px solid #e9ecef}
+  #feedMsg{margin-bottom:15px;font-size:14px;font-weight:bold}
+  .section-title{font-size:16px;font-weight:bold;margin:20px 0 10px 0;color:#495057}
+</style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>📰 News Aggregator</h1>
-      <p>Personalized news with AI summaries & Q&A</p>
-    </header>
+<div class="container">
+  <h1 style="text-align:center;margin-top:0">📰 AI News Intelligence</h1>
+  
+  <div class="section-title">1. Select Your Interest Topics</div>
+  <div class="topic-grid" id="topicGrid"></div>
 
-    <div id="error" class="error" style="display: none;"></div>
-    
-    <!-- Feed Management Section -->
-    <div class="feed-manager">
-      <div class="feed-input-group">
-        <input 
-          type="url" 
-          id="feedInput" 
-          placeholder="Enter RSS feed URL or website URL" 
-          class="feed-input"
-        >
-        <button id="addFeedBtn" class="btn btn-success">Add Feed</button>
-      </div>
+  <div class="section-title">2. Optional: Add Custom Feed</div>
+  <div class="input-group">
+    <input type="text" id="feedInput" placeholder="Enter URL or domain (e.g., elpais.es, cisa.gov)" onkeypress="if(event.key==='Enter') add()">
+    <button id="addBtn" onclick="add()" class="success">Add Feed</button>
+  </div>
+  <div id="feedMsg"></div>
 
-      <div class="feeds-list">
-        <h3>Your Feeds (Check boxes to select which feeds to load):</h3>
-        <div id="feedsList" class="feeds-container"></div>
-      </div>
-    </div>
-
-    <!-- Articles Loading Section -->
-    <div class="controls">
-      <button id="loadBtn" class="btn btn-primary">Load Articles from Selected</button>
-      <span id="status" class="status"></span>
-    </div>
-
-    <div id="articles" class="articles"></div>
-    <div id="loading" class="loading" style="display: none;">Loading articles...</div>
+  <div class="section-title">Active Sources</div>
+  <div id="feedsList" style="margin-bottom:20px"></div>
+  
+  <div style="display:flex;gap:15px;align-items:center;margin-top:20px">
+    <button onclick="load()" style="font-size:16px;padding:12px 24px">Fetch & Summarize Articles</button>
+    <div id="status" style="color:#666;font-weight:bold">Ready</div>
   </div>
 
-  <script src="script.js"></script>
+  <div id="articles" style="margin-top:30px"></div>
+</div>
+
+<script>
+const API = "https://ai-news.berkaytaskol.workers.dev";
+
+// Pre-curated, legally safe topic mapping
+const TOPICS = {
+  cybersecurity: {
+    name: "🛡️ Cybersecurity & Threats",
+    feeds: ["https://www.cisa.gov/cybersecurity-advisories/all.xml"]
+  },
+  health: {
+    name: "🏥 Health & Medical Compliance",
+    feeds: ["https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml"]
+  },
+  tech_reg: {
+    name: "⚖️ Tech & Business Intelligence",
+    feeds: ["https://hnrss.org/frontpage"]
+  }
+};
+
+let activeTopics = JSON.parse(localStorage.getItem('activeTopics')) || ["cybersecurity"];
+let customFeeds = JSON.parse(localStorage.getItem('customFeeds')) || [];
+let arts = {};
+let scrapedTexts = {};
+
+function initTopics() {
+  const grid = document.getElementById("topicGrid");
+  grid.innerHTML = Object.keys(TOPICS).map(key => {
+    const isChecked = activeTopics.includes(key);
+    return `
+      <div class="topic-card ${isChecked ? 'active' : ''}" onclick="toggleTopic('${key}')">
+        <input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation(); toggleTopic('${key}')">
+        <label for="chk-${key}" style="cursor:pointer;font-weight:600">${TOPICS[key].name}</label>
+      </div>
+    `;
+  }).join("");
+}
+
+window.toggleTopic = function(key) {
+  if (activeTopics.includes(key)) {
+    activeTopics = activeTopics.filter(t => t !== key);
+  } else {
+    activeTopics.push(key);
+  }
+  localStorage.setItem('activeTopics', JSON.stringify(activeTopics));
+  initTopics();
+  renderFeeds();
+};
+
+function getAllActiveFeeds() {
+  let topicFeeds = [];
+  activeTopics.forEach(t => {
+    if (TOPICS[t]) topicFeeds.push(...TOPICS[t].feeds);
+  });
+  return Array.from(new Set([...topicFeeds, ...customFeeds]));
+}
+
+function renderFeeds() {
+  const allFeeds = getAllActiveFeeds();
+  const list = document.getElementById("feedsList");
+  if (!allFeeds.length) {
+    list.innerHTML = `<div style="color:#888;font-style:italic">No topics or custom feeds selected. Select a topic above.</div>`;
+    return;
+  }
+  list.innerHTML = allFeeds.map(f => `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;background:#f8f9fa;padding:8px 12px;border-radius:6px">
+      <span style="flex:1;word-break:break-all;font-size:14px">${f}</span>
+      ${customFeeds.includes(f) ? `<button onclick="delCustom('${f}')" class="danger" style="padding:4px 8px;font-size:12px">Remove Custom</button>` : `<span style="font-size:12px;color:#6c757d;background:#e9ecef;padding:2px 6px;border-radius:4px">Topic Preset</span>`}
+    </div>
+  `).join("");
+}
+
+window.add = async function() {
+  const input = document.getElementById("feedInput");
+  const msg = document.getElementById("feedMsg");
+  const btn = document.getElementById("addBtn");
+  let val = input.value.trim();
+  if(!val) return;
+  
+  btn.disabled = true;
+  msg.style.color = "#0d6efd";
+  msg.innerText = "🔍 Inspecting URL...";
+
+  try {
+    const res = await fetch(API + '/api/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: val })
+    });
+    const data = await res.json();
+
+    if(data.success) {
+      if(customFeeds.includes(data.feedUrl) || getAllActiveFeeds().includes(data.feedUrl)) {
+        msg.style.color = "#dc3545";
+        msg.innerText = "⚠️ This feed is already active.";
+      } else {
+        customFeeds.push(data.feedUrl);
+        localStorage.setItem('customFeeds', JSON.stringify(customFeeds));
+        input.value = "";
+        msg.style.color = "#28a745";
+        msg.innerText = `✅ Added: ${data.feedUrl}`;
+        renderFeeds();
+      }
+    } else {
+      msg.style.color = "#dc3545";
+      msg.innerText = `❌ ${data.message || "No RSS feed found."}`;
+    }
+  } catch(e) {
+    msg.style.color = "#dc3545";
+    msg.innerText = "❌ Connection error.";
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.delCustom = function(url) {
+  customFeeds = customFeeds.filter(f => f !== url);
+  localStorage.setItem('customFeeds', JSON.stringify(customFeeds));
+  renderFeeds();
+};
+
+window.load = async function() {
+  const stat = document.getElementById("status");
+  const artDiv = document.getElementById("articles");
+  const sel = getAllActiveFeeds();
+  
+  if(!sel.length) return stat.innerText = "Select at least one topic.";
+
+  stat.innerText = "Fetching feeds..."; artDiv.innerHTML = "";
+
+  try {
+    const res = await fetch(API+'/api/fetch-feeds', {
+      method:'POST', 
+      headers:{'Content-Type':'application/json'}, 
+      body:JSON.stringify({feeds:sel})
+    });
+    const data = await res.json();
+    arts = {}; data.forEach(a => arts[a.id] = a);
+    
+    artDiv.innerHTML = data.map(a => `
+      <div class="card">
+        <h3 style="margin-top:0">${a.title}</h3>
+        <span style="background:#eee;padding:4px 8px;border-radius:4px;font-size:12px">${a.source}</span>
+        <div style="margin:15px 0;display:flex;gap:10px">
+          <a href="${a.link}" target="_blank" style="text-decoration:none;color:#0d6efd;font-weight:bold;margin-top:8px">Read Full Article →</a>
+          <button onclick="startAI('${a.id}')" class="ai">✨ Read with AI</button>
+        </div>
+        <div id="ai-${a.id}" class="ai-box" style="display:none"></div>
+      </div>
+    `).join("");
+    stat.innerText = `Loaded ${data.length} articles`;
+  } catch(e) { stat.innerText = "Failed to load."; }
+};
+
+window.startAI = function(id) {
+  const box = document.getElementById(`ai-${id}`);
+  box.style.display = "block";
+  box.innerHTML = `
+    <p style="margin-top:0;font-weight:bold">🤖 Summarize full article content?</p>
+    <button onclick="sum('${id}')" class="success">Yes, Summarize</button>
+    <button onclick="closeAI('${id}')" class="secondary">No</button>
+  `;
+};
+
+window.closeAI = function(id) { document.getElementById(`ai-${id}`).style.display = "none"; };
+
+window.sum = async function(id) {
+  const box = document.getElementById(`ai-${id}`);
+  box.innerHTML = "<p>⏳ Fetching full text & summarizing...</p>";
+  try {
+    const res = await fetch(API+'/api/summarize', {
+      method:'POST', 
+      headers:{'Content-Type':'application/json'}, 
+      body:JSON.stringify({link: arts[id].link, title: arts[id].title, description: arts[id].description})
+    });
+    const data = await res.json();
+    scrapedTexts[id] = data.fullText || arts[id].title;
+    box.innerHTML = `
+      <p><strong>✨ AI Summary:</strong><br>${data.summary}</p>
+      <div style="display:flex;gap:10px;margin-top:15px">
+        <input type="text" id="q-${id}" placeholder="Ask a question..." onkeypress="if(event.key==='Enter') ask('${id}')">
+        <button onclick="ask('${id}')">Ask</button>
+      </div>
+      <div id="ans-${id}" style="margin-top:10px;font-weight:bold;color:#0d6efd"></div>
+    `;
+  } catch(e) { box.innerHTML = "<p style='color:red'>Failed to summarize.</p>"; }
+};
+
+window.ask = async function(id) {
+  const ans = document.getElementById(`ans-${id}`);
+  const q = document.getElementById(`q-${id}`).value;
+  if(!q) return;
+  ans.innerText = "🤔 Thinking...";
+  try {
+    const res = await fetch(API+'/api/ask', {
+      method:'POST', 
+      headers:{'Content-Type':'application/json'}, 
+      body:JSON.stringify({text: scrapedTexts[id] || arts[id].title, question: q})
+    });
+    const data = await res.json();
+    ans.innerText = "A: " + data.answer;
+  } catch(e) { ans.innerText = "Failed to answer."; }
+};
+
+initTopics();
+renderFeeds();
+</script>
 </body>
 </html>
