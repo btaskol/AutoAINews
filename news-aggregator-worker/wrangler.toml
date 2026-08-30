@@ -1,4 +1,4 @@
 name = "news-aggregator-worker"
-type = "service"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-08-28"
+type = "service"
