@@ -3,16 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <style>
-    body { width: 320px; font-family: system-ui, sans-serif; padding: 15px; margin: 0; }
-    button { width: 100%; padding: 10px; background: #0d6efd; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
-    #result { margin-top: 15px; font-size: 13px; line-height: 1.4; color: #333; }
-    .status { color: #666; font-style: italic; }
+    body { width: 340px; font-family: system-ui, sans-serif; padding: 14px; margin: 0; box-sizing: border-box; }
+    button { width: 100%; padding: 10px; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    button:disabled { background: #94a3b8; }
+    #result { margin-top: 12px; font-size: 13px; line-height: 1.4; color: #1e293b; }
+    .status { color: #64748b; font-style: italic; }
+    .save-section { display: none; margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
+    input, textarea { width: 100%; padding: 7px; margin: 4px 0 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; box-sizing: border-box; }
+    .save-btn { background: #16a34a; }
   </style>
 </head>
 <body>
-  <h3>🎯 Capture Page Intelligence</h3>
+  <h3>🎯 Capture Intelligence</h3>
   <button id="captureBtn">Analyze This Page</button>
   <div id="result"></div>
+
+  <div id="saveSection" class="save-section">
+    <label for="customTitle"><strong>Custom Title / Tag (Optional):</strong></label>
+    <input type="text" id="customTitle" placeholder="e.g., Q3 Security Competitor Alert">
+
+    <label for="comment"><strong>Comment / Notes (Optional):</strong></label>
+    <textarea id="comment" rows="2" placeholder="e.g., Review this before Friday's meeting"></textarea>
+
+    <button id="saveBtn" class="save-btn">📌 Save to Dashboard</button>
+    <div id="saveStatus" style="font-size: 12px; margin-top: 6px;"></div>
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>

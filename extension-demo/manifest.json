@@ -1,16 +1,41 @@
 {
   "manifest_version": 3,
-  "name": "AI Intelligence Capture",
-  "version": "1.1",
-  "permissions": ["activeTab", "scripting", "sidePanel"],
-  "host_permissions": ["<all_urls>"],
+  "name": "Brief",
+  "version": "1.0",
+  "description": "AI-powered page summarization and research capture.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "identity",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://brief.berkaytaskol.workers.dev/*",
+    "https://accounts.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://brief.berkaytaskol.workers.dev/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "background": {
     "service_worker": "background.js"
   },
-  "side_panel": {
-    "default_path": "popup.html"
-  },
   "action": {
-    "default_title": "Open AI Side Panel"
+    "default_title": "Brief",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   }
 }
