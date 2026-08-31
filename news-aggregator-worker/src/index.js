@@ -28,6 +28,24 @@ async function verifyGoogleToken(authHeader) {
   }
 }
 
+function calculateTrial(createdAtStr, subscriptionStatus) {
+  if (subscriptionStatus === 'active') {
+    return { allowed: true, status: 'active', daysLeft: 0 };
+  }
+  const createdAt = new Date(createdAtStr || Date.now());
+  const now = new Date();
+  const diffMs = now - createdAt;
+  const daysPassed = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const daysLeft = Math.max(0, 14 - daysPassed);
+  const isTrialActive = daysPassed < 14;
+
+  return {
+    allowed: isTrialActive,
+    status: isTrialActive ? 'trial' : 'expired',
+    daysLeft
+  };
+}
+
 function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
   const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   googleAuthUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
@@ -158,9 +176,12 @@ export default {
           ON CONFLICT(id) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture
         `).bind(user.sub, user.email, user.name, user.picture).run();
 
+        const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
+        const trialInfo = calculateTrial(dbUser.created_at, dbUser.subscription_status);
+
         return new Response(JSON.stringify({
           success: true,
-          user: { id: user.sub, email: user.email, name: user.name, picture: user.picture },
+          user: { id: user.sub, email: user.email, name: user.name, picture: user.picture, trial: trialInfo },
           sessionToken: googleToken
         }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
@@ -172,7 +193,14 @@ export default {
       const authHeader = req.headers.get("Authorization");
       const user = await verifyGoogleToken(authHeader);
       if (!user) return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: corsHeaders });
-      return new Response(JSON.stringify({ success: true, user: { id: user.sub, email: user.email, name: user.name, picture: user.picture } }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+
+      const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
+      const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
+
+      return new Response(JSON.stringify({
+        success: true,
+        user: { id: user.sub, email: user.email, name: user.name, picture: user.picture, trial: trialInfo }
+      }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
@@ -186,6 +214,9 @@ export default {
       if (!user) {
         return new Response(renderMinimalAuthPage(origin, "Session expired. Please sign in.", true), { headers: htmlHeaders });
       }
+
+      const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
+      const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
 
       const { results } = await env.DB.prepare(
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
@@ -225,6 +256,9 @@ export default {
         </div>
       `).join("") : `<div class="empty-state">No saved briefs found. Use Brief to capture pages.</div>`;
 
+      const badgeText = trialInfo.status === 'active' ? 'Pro Member' : (trialInfo.allowed ? `Trial: ${trialInfo.daysLeft} days left` : 'Trial Expired');
+      const badgeStyle = trialInfo.status === 'active' ? 'background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;' : (trialInfo.allowed ? 'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;' : 'background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;');
+
       const html = `
         <!DOCTYPE html>
         <html lang="en">
@@ -242,6 +276,7 @@ export default {
             .logo-icon { width: 28px; height: 28px; background: var(--text); color: var(--bg); border-radius: 6px; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
             h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
             .header-actions { display: flex; align-items: center; gap: 12px; }
+            .status-badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 12px; }
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
@@ -315,6 +350,7 @@ export default {
               <h1>Brief</h1>
             </div>
             <div class="header-actions">
+              <span class="status-badge" style="${badgeStyle}">${badgeText}</span>
               <button class="btn-secondary" id="themeToggleBtn">Dark</button>
               <div class="profile-dropdown">
                 <button class="btn-secondary" id="profBtn">${user.email}</button>
@@ -526,6 +562,9 @@ export default {
       return new Response(JSON.stringify({ error: "Unauthorized. Please sign in." }), { status: 401, headers: corsHeaders });
     }
 
+    const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
+    const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
+
     if (url.pathname === "/api/summary/update" && req.method === "POST") {
       try {
         const { id, title, customTitle, comment } = await req.json();
@@ -560,6 +599,13 @@ export default {
     }
 
     if (url.pathname === "/api/extension-capture" && req.method === "POST") {
+      if (!trialInfo.allowed) {
+        return new Response(JSON.stringify({
+          error: "Your 14-day free trial has expired. Please upgrade to Brief Pro to generate new summaries.",
+          trialExpired: true
+        }), { status: 402, headers: corsHeaders });
+      }
+
       try {
         const { pageText } = await req.json();
         if (!pageText) return new Response(JSON.stringify({ error: "No text provided" }), { status: 400, headers: corsHeaders });
@@ -611,6 +657,13 @@ export default {
     }
 
     if (url.pathname === "/api/save-dashboard" && req.method === "POST") {
+      if (!trialInfo.allowed) {
+        return new Response(JSON.stringify({
+          error: "Your 14-day free trial has expired. Please upgrade to Brief Pro to save summaries.",
+          trialExpired: true
+        }), { status: 402, headers: corsHeaders });
+      }
+
       const body = await req.json().catch(() => ({}));
       const { title, customTitle, comment, url: articleUrl, summary, pageText } = body;
 
