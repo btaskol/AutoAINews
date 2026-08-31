@@ -11,9 +11,27 @@ const htmlHeaders = {
 
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 
+async function ensureSchema(db) {
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN subscription_status TEXT DEFAULT 'trial';",
+    "ALTER TABLE users ADD COLUMN stripe_customer_id TEXT;",
+    "ALTER TABLE users ADD COLUMN session_token TEXT;",
+    "ALTER TABLE users ADD COLUMN session_expires_at TEXT;"
+  ];
+  for (const sql of migrations) {
+    try {
+      await db.prepare(sql).run();
+    } catch (e) {
+      // Column already exists
+    }
+  }
+}
+
 async function verifyGoogleToken(googleIdToken) {
+  if (!googleIdToken) return null;
+  const cleanToken = googleIdToken.startsWith("Bearer ") ? googleIdToken.split(" ")[1] : googleIdToken;
   try {
-    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${googleIdToken}`);
+    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${cleanToken}`);
     if (!googleRes.ok) return null;
 
     const payload = await googleRes.json();
@@ -26,16 +44,23 @@ async function verifyGoogleToken(googleIdToken) {
 }
 
 async function getUserBySessionToken(authHeader, env) {
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  const token = authHeader.split(" ")[1];
+  if (!authHeader) return null;
+  const token = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader;
+  if (!token) return null;
 
-  const user = await env.DB.prepare(`
-    SELECT * FROM users 
-    WHERE session_token = ? 
-    AND (session_expires_at IS NULL OR session_expires_at > CURRENT_TIMESTAMP)
-  `).bind(token).first();
+  try {
+    const user = await env.DB.prepare(`SELECT * FROM users WHERE session_token = ?`).bind(token).first();
+    if (!user) return null;
 
-  return user || null;
+    if (user.session_expires_at) {
+      const expires = new Date(user.session_expires_at).getTime();
+      if (Date.now() > expires) return null;
+    }
+
+    return user;
+  } catch (e) {
+    return null;
+  }
 }
 
 function calculateTrial(createdAtStr, subscriptionStatus) {
@@ -142,12 +167,12 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
                 localStorage.setItem('sessionToken', data.sessionToken);
                 window.location.href = '/dashboard?token=' + data.sessionToken;
               } else {
-                statusMsg.innerText = "Authentication failed. Please try again.";
+                statusMsg.innerText = "Authentication failed: " + (data.error || "Please try again.");
                 localStorage.removeItem('sessionToken');
               }
             })
-            .catch(() => {
-              statusMsg.innerText = "Connection error. Please try again.";
+            .catch(err => {
+              statusMsg.innerText = "Connection error: " + err.message;
               localStorage.removeItem('sessionToken');
             });
           }
@@ -176,6 +201,7 @@ export default {
 
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
       try {
+        await ensureSchema(env.DB);
         const { googleToken } = await req.json();
         const googleUser = await verifyGoogleToken(googleToken);
 
@@ -196,7 +222,7 @@ export default {
         `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, appSessionToken, sessionExpiresAt).run();
 
         const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
-        const trialInfo = calculateTrial(dbUser.created_at, dbUser.subscription_status);
+        const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
 
         return new Response(JSON.stringify({
           success: true,
@@ -209,9 +235,10 @@ export default {
     }
 
     if (url.pathname === "/api/auth/verify" && req.method === "GET") {
+      await ensureSchema(env.DB);
       const authHeader = req.headers.get("Authorization");
       const user = await getUserBySessionToken(authHeader, env);
-      
+
       if (!user) return new Response(JSON.stringify({ error: "Invalid or expired session" }), { status: 401, headers: corsHeaders });
 
       const trialInfo = calculateTrial(user.created_at, user.subscription_status);
@@ -223,6 +250,7 @@ export default {
     }
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
+      await ensureSchema(env.DB);
       if (url.searchParams.get("action") === "logout") {
         return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true), { headers: htmlHeaders });
       }
@@ -578,6 +606,7 @@ export default {
     }
 
     const authHeader = req.headers.get("Authorization");
+    await ensureSchema(env.DB);
     const user = await getUserBySessionToken(authHeader, env);
 
     if (!user && url.pathname.startsWith("/api/")) {
