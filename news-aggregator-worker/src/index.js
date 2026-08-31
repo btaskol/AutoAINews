@@ -11,12 +11,9 @@ const htmlHeaders = {
 
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 
-async function verifyGoogleToken(authHeader) {
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  const token = authHeader.split(" ")[1];
-
+async function verifyGoogleToken(googleIdToken) {
   try {
-    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);
+    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${googleIdToken}`);
     if (!googleRes.ok) return null;
 
     const payload = await googleRes.json();
@@ -26,6 +23,19 @@ async function verifyGoogleToken(authHeader) {
   } catch (e) {
     return null;
   }
+}
+
+async function getUserBySessionToken(authHeader, env) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  const token = authHeader.split(" ")[1];
+
+  const user = await env.DB.prepare(`
+    SELECT * FROM users 
+    WHERE session_token = ? 
+    AND (session_expires_at IS NULL OR session_expires_at > CURRENT_TIMESTAMP)
+  `).bind(token).first();
+
+  return user || null;
 }
 
 function calculateTrial(createdAtStr, subscriptionStatus) {
@@ -167,22 +177,31 @@ export default {
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
       try {
         const { googleToken } = await req.json();
-        const user = await verifyGoogleToken(`Bearer ${googleToken}`);
+        const googleUser = await verifyGoogleToken(googleToken);
 
-        if (!user) return new Response(JSON.stringify({ error: "Invalid Google Token" }), { status: 401, headers: corsHeaders });
+        if (!googleUser) return new Response(JSON.stringify({ error: "Invalid Google Token" }), { status: 401, headers: corsHeaders });
+
+        const appSessionToken = crypto.randomUUID();
+        const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
         await env.DB.prepare(`
-          INSERT INTO users (id, email, name, picture) VALUES (?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture
-        `).bind(user.sub, user.email, user.name, user.picture).run();
+          INSERT INTO users (id, email, name, picture, session_token, session_expires_at) 
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET 
+            email = excluded.email, 
+            name = excluded.name, 
+            picture = excluded.picture,
+            session_token = excluded.session_token,
+            session_expires_at = excluded.session_expires_at
+        `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, appSessionToken, sessionExpiresAt).run();
 
-        const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
+        const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
         const trialInfo = calculateTrial(dbUser.created_at, dbUser.subscription_status);
 
         return new Response(JSON.stringify({
           success: true,
-          user: { id: user.sub, email: user.email, name: user.name, picture: user.picture, trial: trialInfo },
-          sessionToken: googleToken
+          user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, trial: trialInfo },
+          sessionToken: appSessionToken
         }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Auth Error: " + err.message }), { status: 500, headers: corsHeaders });
@@ -191,15 +210,15 @@ export default {
 
     if (url.pathname === "/api/auth/verify" && req.method === "GET") {
       const authHeader = req.headers.get("Authorization");
-      const user = await verifyGoogleToken(authHeader);
-      if (!user) return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: corsHeaders });
+      const user = await getUserBySessionToken(authHeader, env);
+      
+      if (!user) return new Response(JSON.stringify({ error: "Invalid or expired session" }), { status: 401, headers: corsHeaders });
 
-      const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
-      const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
+      const trialInfo = calculateTrial(user.created_at, user.subscription_status);
 
       return new Response(JSON.stringify({
         success: true,
-        user: { id: user.sub, email: user.email, name: user.name, picture: user.picture, trial: trialInfo }
+        user: { id: user.id, email: user.email, name: user.name, picture: user.picture, trial: trialInfo }
       }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
@@ -209,18 +228,21 @@ export default {
       }
 
       let token = url.searchParams.get("token");
-      let user = await verifyGoogleToken(`Bearer ${token}`);
+      let user = null;
+
+      if (token) {
+        user = await getUserBySessionToken(`Bearer ${token}`, env);
+      }
 
       if (!user) {
         return new Response(renderMinimalAuthPage(origin, "Session expired. Please sign in.", true), { headers: htmlHeaders });
       }
 
-      const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
-      const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
+      const trialInfo = calculateTrial(user.created_at, user.subscription_status);
 
       const { results } = await env.DB.prepare(
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
-      ).bind(user.sub).all();
+      ).bind(user.id).all();
 
       const cardsHtml = results.length > 0 ? results.map(s => `
         <div id="card-${s.id}" class="card">
@@ -556,14 +578,13 @@ export default {
     }
 
     const authHeader = req.headers.get("Authorization");
-    const user = await verifyGoogleToken(authHeader);
+    const user = await getUserBySessionToken(authHeader, env);
 
     if (!user && url.pathname.startsWith("/api/")) {
-      return new Response(JSON.stringify({ error: "Unauthorized. Please sign in." }), { status: 401, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: "Unauthorized. Session expired." }), { status: 401, headers: corsHeaders });
     }
 
-    const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(user.sub).first();
-    const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
+    const trialInfo = calculateTrial(user.created_at, user.subscription_status);
 
     if (url.pathname === "/api/summary/update" && req.method === "POST") {
       try {
@@ -572,7 +593,7 @@ export default {
 
         await env.DB.prepare(
           "UPDATE summaries SET title = ?, custom_title = ?, comment = ? WHERE id = ? AND user_id = ?"
-        ).bind(title || "Untitled", customTitle || "", comment || "", id, user.sub).run();
+        ).bind(title || "Untitled", customTitle || "", comment || "", id, user.id).run();
 
         return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
@@ -585,12 +606,12 @@ export default {
         const id = url.searchParams.get("id");
         if (!id) return new Response(JSON.stringify({ error: "Missing summary ID" }), { status: 400, headers: corsHeaders });
 
-        const row = await env.DB.prepare("SELECT snapshot_key FROM summaries WHERE id = ? AND user_id = ?").bind(id, user.sub).first();
+        const row = await env.DB.prepare("SELECT snapshot_key FROM summaries WHERE id = ? AND user_id = ?").bind(id, user.id).first();
         if (row && row.snapshot_key) {
           await env.SNAPSHOTS.delete(row.snapshot_key);
         }
 
-        await env.DB.prepare("DELETE FROM summaries WHERE id = ? AND user_id = ?").bind(id, user.sub).run();
+        await env.DB.prepare("DELETE FROM summaries WHERE id = ? AND user_id = ?").bind(id, user.id).run();
 
         return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
@@ -667,22 +688,22 @@ export default {
       const body = await req.json().catch(() => ({}));
       const { title, customTitle, comment, url: articleUrl, summary, pageText } = body;
 
-      const snapshotKey = `snapshots/${user.sub}/snapshot-${Date.now()}.txt`;
+      const snapshotKey = `snapshots/${user.id}/snapshot-${Date.now()}.txt`;
       await env.SNAPSHOTS.put(snapshotKey, pageText || "");
 
       await env.DB.prepare(
         "INSERT INTO summaries (user_id, title, custom_title, comment, url, summary, snapshot_key) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(user.sub, title, customTitle || "", comment || "", articleUrl, summary, snapshotKey).run();
+      ).bind(user.id, title, customTitle || "", comment || "", articleUrl, summary, snapshotKey).run();
 
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
     if (url.pathname === "/api/account/delete" && req.method === "DELETE") {
-      const { results } = await env.DB.prepare("SELECT snapshot_key FROM summaries WHERE user_id = ?").bind(user.sub).all();
+      const { results } = await env.DB.prepare("SELECT snapshot_key FROM summaries WHERE user_id = ?").bind(user.id).all();
       for (const row of results) {
         if (row.snapshot_key) await env.SNAPSHOTS.delete(row.snapshot_key);
       }
-      await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.sub).run();
+      await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
