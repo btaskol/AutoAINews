@@ -37,16 +37,6 @@ function syncDashboardLogoutTabs() {
   });
 }
 
-function syncDashboardLoginTabs(sessionToken) {
-  chrome.tabs.query({}, (tabs) => {
-    tabs.forEach((tab) => {
-      if (tab?.id && tab?.url && tab.url.includes("brief.berkaytaskol.workers.dev")) {
-        chrome.tabs.update(tab.id, { url: `${API_BASE}/dashboard?token=${sessionToken}` });
-      }
-    });
-  });
-}
-
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "SYNC_TOKEN_FROM_WEB") {
     chrome.storage.local.get(["sessionToken"], (res) => {
@@ -102,7 +92,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const data = await res.json();
         if (data.success) {
           chrome.storage.local.set({ sessionToken: data.sessionToken, user: data.user }, () => {
-            syncDashboardLoginTabs(data.sessionToken);
             sendResponse({ success: true, user: data.user });
           });
         } else {
