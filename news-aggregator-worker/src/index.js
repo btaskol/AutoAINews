@@ -11,20 +11,10 @@ const htmlHeaders = {
 
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 
-async function ensureSchema(db) {
-  const migrations = [
-    "ALTER TABLE users ADD COLUMN subscription_status TEXT DEFAULT 'trial';",
-    "ALTER TABLE users ADD COLUMN stripe_customer_id TEXT;",
-    "ALTER TABLE users ADD COLUMN session_token TEXT;",
-    "ALTER TABLE users ADD COLUMN session_expires_at TEXT;"
-  ];
-  for (const sql of migrations) {
-    try {
-      await db.prepare(sql).run();
-    } catch (e) {
-      // Column already exists
-    }
-  }
+function escapeHtml(str) {
+  return (str || '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[m]);
 }
 
 async function verifyGoogleToken(googleIdToken) {
@@ -43,31 +33,39 @@ async function verifyGoogleToken(googleIdToken) {
   }
 }
 
-async function getUserBySessionToken(authHeader, env) {
+async function verifyTokenOrSession(authHeader, env) {
   if (!authHeader) return null;
   const token = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader;
   if (!token) return null;
 
   try {
-    const user = await env.DB.prepare(`SELECT * FROM users WHERE session_token = ?`).bind(token).first();
-    if (!user) return null;
+    const dbUser = await env.DB.prepare(`SELECT * FROM users WHERE session_token = ?`).bind(token).first();
+    if (dbUser) return dbUser;
+  } catch (e) {}
 
-    if (user.session_expires_at) {
-      const expires = new Date(user.session_expires_at).getTime();
-      if (Date.now() > expires) return null;
-    }
-
-    return user;
-  } catch (e) {
-    return null;
+  const googleUser = await verifyGoogleToken(token);
+  if (googleUser) {
+    try {
+      const dbUser = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(googleUser.sub).first();
+      if (dbUser) return dbUser;
+    } catch (e) {}
+    return { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, subscription_status: 'trial', role: 'user', created_at: new Date().toISOString() };
   }
+
+  return null;
 }
 
-function calculateTrial(createdAtStr, subscriptionStatus) {
-  if (subscriptionStatus === 'active') {
+function calculateTrial(user, trialRecord) {
+  if (user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com') {
+    return { allowed: true, status: 'admin', daysLeft: 999 };
+  }
+
+  if (user?.subscription_status === 'active') {
     return { allowed: true, status: 'active', daysLeft: 0 };
   }
-  const createdAt = new Date(createdAtStr || Date.now());
+
+  const creationTimestamp = trialRecord?.first_registered_at || user?.created_at || Date.now();
+  const createdAt = new Date(creationTimestamp);
   const now = new Date();
   const diffMs = now - createdAt;
   const daysPassed = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -134,17 +132,9 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
           window.postMessage({ source: 'BRIEF_DASHBOARD', status: 'logged_out' }, window.location.origin);
         }
 
-        emitLogout();
-
-        window.addEventListener('message', (event) => {
-          if (event.origin !== window.location.origin) return;
-          if (event.data && event.data.source === 'BRIEF_EXTENSION' && event.data.action === 'REQUEST_AUTH_STATE') {
-            emitLogout();
-          }
-        });
-
         if (window.location.search.includes('action=logout')) {
           localStorage.removeItem('sessionToken');
+          emitLogout();
           window.history.replaceState({}, document.title, '/dashboard');
         }
 
@@ -201,7 +191,6 @@ export default {
 
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
       try {
-        await ensureSchema(env.DB);
         const { googleToken } = await req.json();
         const googleUser = await verifyGoogleToken(googleToken);
 
@@ -210,23 +199,39 @@ export default {
         const appSessionToken = crypto.randomUUID();
         const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-        await env.DB.prepare(`
-          INSERT INTO users (id, email, name, picture, session_token, session_expires_at) 
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET 
-            email = excluded.email, 
-            name = excluded.name, 
-            picture = excluded.picture,
-            session_token = excluded.session_token,
-            session_expires_at = excluded.session_expires_at
-        `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, appSessionToken, sessionExpiresAt).run();
+        try {
+          await env.DB.prepare(`
+            INSERT INTO used_trials (email) VALUES (?)
+            ON CONFLICT(email) DO NOTHING
+          `).bind(googleUser.email).run();
+        } catch (e) {}
+
+        try {
+          await env.DB.prepare(`
+            INSERT INTO users (id, email, name, picture, session_token, session_expires_at) 
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET 
+              email = excluded.email, 
+              name = excluded.name, 
+              picture = excluded.picture,
+              session_token = excluded.session_token,
+              session_expires_at = excluded.session_expires_at
+          `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, appSessionToken, sessionExpiresAt).run();
+        } catch (dbErr) {
+          await env.DB.prepare(`
+            INSERT INTO users (id, email, name, picture) 
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, picture = excluded.picture
+          `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
+        }
 
         const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
-        const trialInfo = calculateTrial(dbUser?.created_at, dbUser?.subscription_status);
+        const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(googleUser.email).first();
+        const trialInfo = calculateTrial(dbUser, trialRecord);
 
         return new Response(JSON.stringify({
           success: true,
-          user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, trial: trialInfo },
+          user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, role: dbUser?.role || 'user', trial: trialInfo },
           sessionToken: appSessionToken
         }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
@@ -235,22 +240,84 @@ export default {
     }
 
     if (url.pathname === "/api/auth/verify" && req.method === "GET") {
-      await ensureSchema(env.DB);
       const authHeader = req.headers.get("Authorization");
-      const user = await getUserBySessionToken(authHeader, env);
+      const user = await verifyTokenOrSession(authHeader, env);
 
       if (!user) return new Response(JSON.stringify({ error: "Invalid or expired session" }), { status: 401, headers: corsHeaders });
 
-      const trialInfo = calculateTrial(user.created_at, user.subscription_status);
+      const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
+      const trialInfo = calculateTrial(user, trialRecord);
 
       return new Response(JSON.stringify({
         success: true,
-        user: { id: user.id, email: user.email, name: user.name, picture: user.picture, trial: trialInfo }
+        user: { id: user.id, email: user.email, name: user.name, picture: user.picture, role: user.role || 'user', trial: trialInfo }
       }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
+    if (url.pathname === "/api/create-checkout-session" && req.method === "POST") {
+      const authHeader = req.headers.get("Authorization");
+      const user = await verifyTokenOrSession(authHeader, env);
+
+      if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      if (!env.STRIPE_SECRET_KEY) return new Response(JSON.stringify({ error: "Stripe API Key missing." }), { status: 500, headers: corsHeaders });
+
+      try {
+        const activeSessionToken = user.session_token || (authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader);
+
+        const params = new URLSearchParams();
+        params.append("payment_method_types[]", "card");
+        params.append("mode", "subscription");
+        params.append("customer_email", user.email);
+        params.append("client_reference_id", user.id);
+        params.append("line_items[0][price_data][currency]", "usd");
+        params.append("line_items[0][price_data][product_data][name]", "Brief Pro Subscription");
+        params.append("line_items[0][price_data][unit_amount]", "700");
+        params.append("line_items[0][price_data][recurring][interval]", "month");
+        params.append("line_items[0][quantity]", "1");
+        params.append("success_url", `${origin}/dashboard?checkout=success&token=${activeSessionToken}`);
+        params.append("cancel_url", `${origin}/dashboard?checkout=cancel&token=${activeSessionToken}`);
+
+        const stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.STRIPE_SECRET_KEY}`,
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: params.toString()
+        });
+
+        const session = await stripeRes.json();
+        if (session.url) {
+          return new Response(JSON.stringify({ url: session.url }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+        } else {
+          return new Response(JSON.stringify({ error: session.error?.message || "Stripe session creation failed." }), { status: 500, headers: corsHeaders });
+        }
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    if (url.pathname === "/api/webhooks/stripe" && req.method === "POST") {
+      try {
+        const body = await req.json();
+        if (body.type === "checkout.session.completed") {
+          const session = body.data.object;
+          const userId = session.client_reference_id;
+          const customerId = session.customer;
+
+          if (userId) {
+            await env.DB.prepare(`
+              UPDATE users SET subscription_status = 'active', stripe_customer_id = ? WHERE id = ?
+            `).bind(customerId || "", userId).run();
+          }
+        }
+        return new Response(JSON.stringify({ received: true }), { headers: corsHeaders });
+      } catch (e) {
+        return new Response("Webhook Error: " + e.message, { status: 400, headers: corsHeaders });
+      }
+    }
+
     if (url.pathname === "/dashboard" && req.method === "GET") {
-      await ensureSchema(env.DB);
       if (url.searchParams.get("action") === "logout") {
         return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true), { headers: htmlHeaders });
       }
@@ -259,14 +326,15 @@ export default {
       let user = null;
 
       if (token) {
-        user = await getUserBySessionToken(`Bearer ${token}`, env);
+        user = await verifyTokenOrSession(`Bearer ${token}`, env);
       }
 
       if (!user) {
-        return new Response(renderMinimalAuthPage(origin, "Session expired. Please sign in.", true), { headers: htmlHeaders });
+        return new Response(renderMinimalAuthPage(origin, "", false), { headers: htmlHeaders });
       }
 
-      const trialInfo = calculateTrial(user.created_at, user.subscription_status);
+      const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
+      const trialInfo = calculateTrial(user, trialRecord);
 
       const { results } = await env.DB.prepare(
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
@@ -275,25 +343,25 @@ export default {
       const cardsHtml = results.length > 0 ? results.map(s => `
         <div id="card-${s.id}" class="card">
           <div class="card-header">
-            <span id="tag-display-${s.id}" class="card-tag">${s.custom_title || "Web Capture"}</span>
-            <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${s.custom_title || ''}" style="display:none;" placeholder="Tag / Category">
+            <span id="tag-display-${s.id}" class="card-tag">${escapeHtml(s.custom_title) || "Web Capture"}</span>
+            <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml(s.custom_title)}" style="display:none;" placeholder="Tag / Category">
             <div class="card-meta">
-              <span>${s.created_at || "Recent"}</span>
+              <span>${escapeHtml(s.created_at) || "Recent"}</span>
               <button id="btn-edit-${s.id}" onclick="enableCardEdit('${s.id}')" class="btn-text">Edit</button>
               <button onclick="deleteSummary('${s.id}')" class="btn-text-danger">Delete</button>
             </div>
           </div>
           
-          <h2 id="title-display-${s.id}" class="card-title">${s.title}</h2>
-          <input type="text" id="title-edit-${s.id}" class="card-title-input-inline" value="${s.title}" style="display:none;" placeholder="Article Title">
+          <h2 id="title-display-${s.id}" class="card-title">${escapeHtml(s.title)}</h2>
+          <input type="text" id="title-edit-${s.id}" class="card-title-input-inline" value="${escapeHtml(s.title)}" style="display:none;" placeholder="Article Title">
 
           <div class="card-body-wrapper">
-            <div class="card-body clamped">${s.summary}</div>
+            <div class="card-body clamped">${escapeHtml(s.summary)}</div>
             <button class="btn-expand" onclick="toggleExpand(this)" style="display:none;">Show More</button>
           </div>
 
-          <div id="note-display-${s.id}" class="card-note" style="${s.comment ? '' : 'display:none;'}">${s.comment ? 'Note: ' + s.comment : ''}</div>
-          <textarea id="note-edit-${s.id}" class="card-textarea-inline" style="display:none;" placeholder="Add a note...">${s.comment || ''}</textarea>
+          <div id="note-display-${s.id}" class="card-note" style="${s.comment ? '' : 'display:none;'}">${s.comment ? 'Note: ' + escapeHtml(s.comment) : ''}</div>
+          <textarea id="note-edit-${s.id}" class="card-textarea-inline" style="display:none;" placeholder="Add a note...">${escapeHtml(s.comment)}</textarea>
           
           <div id="edit-actions-${s.id}" class="edit-actions" style="display:none;">
             <button onclick="saveCardEdit('${s.id}')" class="btn-secondary-sm">Save Changes</button>
@@ -301,13 +369,17 @@ export default {
           </div>
 
           <div class="card-footer">
-            <a href="${s.url}" target="_blank" rel="noopener noreferrer" class="resource-link">Visit Source ↗</a>
+            <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer" class="resource-link">Visit Source ↗</a>
           </div>
         </div>
       `).join("") : `<div class="empty-state">No saved briefs found. Use Brief to capture pages.</div>`;
 
-      const badgeText = trialInfo.status === 'active' ? 'Pro Member' : (trialInfo.allowed ? `Trial: ${trialInfo.daysLeft} days left` : 'Trial Expired');
-      const badgeStyle = trialInfo.status === 'active' ? 'background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;' : (trialInfo.allowed ? 'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;' : 'background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;');
+      const badgeText = trialInfo.status === 'admin' ? 'Admin Access' : (trialInfo.status === 'active' ? 'Pro Member' : (trialInfo.allowed ? `Trial: ${trialInfo.daysLeft} days left` : 'Trial Expired'));
+      const badgeStyle = trialInfo.status === 'admin' ? 'background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe;' : (trialInfo.status === 'active' ? 'background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;' : (trialInfo.allowed ? 'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;' : 'background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;'));
+
+      const upgradeBtnHtml = (trialInfo.status !== 'active' && trialInfo.status !== 'admin') ? `
+        <button id="upgradeBtn" class="btn-upgrade">Upgrade to Pro ($7/mo)</button>
+      ` : '';
 
       const html = `
         <!DOCTYPE html>
@@ -327,6 +399,8 @@ export default {
             h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
             .header-actions { display: flex; align-items: center; gap: 12px; }
             .status-badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 12px; }
+            .btn-upgrade { background: #059669; color: #ffffff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+            .btn-upgrade:hover { background: #047857; }
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
@@ -387,12 +461,6 @@ export default {
             }
 
             emitAuthState();
-            window.addEventListener('message', (event) => {
-              if (event.origin !== window.location.origin) return;
-              if (event.data && event.data.source === 'BRIEF_EXTENSION' && event.data.action === 'REQUEST_AUTH_STATE') {
-                emitAuthState();
-              }
-            });
           </script>
           <header>
             <div class="brand">
@@ -401,9 +469,10 @@ export default {
             </div>
             <div class="header-actions">
               <span class="status-badge" style="${badgeStyle}">${badgeText}</span>
+              ${upgradeBtnHtml}
               <button class="btn-secondary" id="themeToggleBtn">Dark</button>
               <div class="profile-dropdown">
-                <button class="btn-secondary" id="profBtn">${user.email}</button>
+                <button class="btn-secondary" id="profBtn">${escapeHtml(user.email)}</button>
                 <div class="dropdown-menu" id="profMenu">
                   <button class="dropdown-item" id="logoutBtn">Sign Out</button>
                   <button class="dropdown-item danger" id="deleteBtn">Delete Account</button>
@@ -420,6 +489,29 @@ export default {
           <div id="noSearchResults" class="empty-state" style="display: none;">No matching briefs found.</div>
 
           <script>
+            const upgradeBtn = document.getElementById('upgradeBtn');
+            if (upgradeBtn) {
+              upgradeBtn.onclick = async () => {
+                upgradeBtn.innerText = 'Redirecting...';
+                try {
+                  const res = await fetch('/api/create-checkout-session', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ${token}' }
+                  });
+                  const data = await res.json();
+                  if (data.url) {
+                    window.location.href = data.url;
+                  } else {
+                    alert('Checkout Error: ' + (data.error || 'Failed to initialize payment.'));
+                    upgradeBtn.innerText = 'Upgrade to Pro ($7/mo)';
+                  }
+                } catch (e) {
+                  alert('Connection error: ' + e.message);
+                  upgradeBtn.innerText = 'Upgrade to Pro ($7/mo)';
+                }
+              };
+            }
+
             const themeBtn = document.getElementById('themeToggleBtn');
             const isDark = localStorage.getItem('theme') === 'dark';
             themeBtn.innerText = isDark ? 'Light' : 'Dark';
@@ -606,14 +698,14 @@ export default {
     }
 
     const authHeader = req.headers.get("Authorization");
-    await ensureSchema(env.DB);
-    const user = await getUserBySessionToken(authHeader, env);
+    const user = await verifyTokenOrSession(authHeader, env);
 
     if (!user && url.pathname.startsWith("/api/")) {
       return new Response(JSON.stringify({ error: "Unauthorized. Session expired." }), { status: 401, headers: corsHeaders });
     }
 
-    const trialInfo = calculateTrial(user.created_at, user.subscription_status);
+    const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
+    const trialInfo = calculateTrial(user, trialRecord);
 
     if (url.pathname === "/api/summary/update" && req.method === "POST") {
       try {
