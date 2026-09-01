@@ -27,10 +27,20 @@ function clearCardFromAllTabs() {
   });
 }
 
-function syncDashboardLogoutTabs() {
-  chrome.tabs.query({}, (tabs) => {
+function syncDashboardLoginTabs(token) {
+  chrome.tabs.query({ url: `${API_BASE}/*` }, (tabs) => {
     tabs.forEach((tab) => {
-      if (tab?.id && tab?.url && tab.url.includes("brief.berkaytaskol.workers.dev")) {
+      if (tab?.id) {
+        chrome.tabs.update(tab.id, { url: `${API_BASE}/dashboard?token=${token}` });
+      }
+    });
+  });
+}
+
+function syncDashboardLogoutTabs() {
+  chrome.tabs.query({ url: `${API_BASE}/*` }, (tabs) => {
+    tabs.forEach((tab) => {
+      if (tab?.id) {
         chrome.tabs.update(tab.id, { url: `${API_BASE}/dashboard?action=logout` });
       }
     });
@@ -56,12 +66,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "CLEAR_TOKEN_FROM_WEB") {
-    chrome.storage.local.get(["sessionToken"], (res) => {
-      if (res.sessionToken) {
-        chrome.storage.local.clear(() => {
-          clearCardFromAllTabs();
-        });
-      }
+    chrome.storage.local.clear(() => {
+      clearCardFromAllTabs();
     });
     return true;
   }
@@ -92,6 +98,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const data = await res.json();
         if (data.success) {
           chrome.storage.local.set({ sessionToken: data.sessionToken, user: data.user }, () => {
+            syncDashboardLoginTabs(data.sessionToken);
             sendResponse({ success: true, user: data.user });
           });
         } else {
