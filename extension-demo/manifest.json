@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Brief",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered executive summaries and personal web captures.",
   "permissions": [
     "activeTab",
@@ -17,6 +17,23 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Summarize Page"
-  }
+    "default_title": "Summarize Page",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://brief.berkaytaskol.workers.dev/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
 }
