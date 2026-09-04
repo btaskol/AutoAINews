@@ -1,5 +1,5 @@
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
-const API_BASE = "https://brief.berkaytaskol.workers.dev";
+const API_BASE = "https://brieflykeep.com";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
