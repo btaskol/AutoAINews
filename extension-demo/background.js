@@ -1,6 +1,12 @@
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 const API_BASE = "https://brieflykeep.com";
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -262,9 +268,9 @@ function renderUI(context) {
       </div>
     </div>
     <div style="background:#f9fafb;border:1px solid #f3f4f6;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#4b5563;">
-      <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;font-weight:600;color:#111827;">${context.title}</div>
+      <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;font-weight:600;color:#111827;">${escapeHtml(context.title)}</div>
       <div style="display:flex;justify-content:space-between;color:#6b7280;">
-        <span>${context.user.email}</span>
+        <span>${escapeHtml(context.user.email)}</span>
         <span>~${context.wordCount} words</span>
       </div>
     </div>
@@ -289,7 +295,7 @@ function renderUI(context) {
     chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText }, (data) => {
       if (data?.summary) {
         body.innerHTML = `
-          <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${data.summary.replace(/\n/g, '<br>')}</div>
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
           <input type="text" id="ai-tag" placeholder="Tag / Custom Title (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
           <textarea id="ai-comment" rows="2" placeholder="Note (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;margin-bottom:10px;"></textarea>
           <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save Capture</button>
@@ -319,7 +325,7 @@ function renderUI(context) {
           });
         };
       } else {
-        body.innerHTML = `<div style="color:#dc2626;font-size:12px;">${data?.error || "Error generating summary."}</div>`;
+        body.innerHTML = `<div style="color:#dc2626;font-size:12px;">${escapeHtml(data?.error || "Error generating summary.")}</div>`;
       }
     });
   };
