@@ -142,12 +142,6 @@ function calculateTrial(user, trialRecord) {
   return { allowed: true, status: 'free', daysLeft: 0 };
 }
 
-function stripePlanFor(value) {
-  return value === 'yearly'
-    ? { id: 'yearly', amount: 5900, interval: 'year', label: 'Brief Pro Yearly' }
-    : { id: 'monthly', amount: 700, interval: 'month', label: 'Brief Pro Monthly' };
-}
-
 function hexEncode(bytes) {
   return Array.from(new Uint8Array(bytes)).map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -230,14 +224,8 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
         .message { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; padding: 10px; background: var(--sub-bg); border-radius: 6px; }
         .value-list { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 13px; gap: 8px 18px; justify-content: center; list-style: none; margin: 0 0 28px; padding: 0; }
         .value-list li::before { content: '✓'; color: #059669; font-weight: 700; margin-right: 6px; }
-        .plans { border-top: 1px solid var(--border); display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); margin: 32px 0 26px; padding-top: 25px; text-align: left; }
-        .plan { border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-        .plan strong { display: block; font-size: 13px; margin-bottom: 4px; }
-        .plan span { color: var(--text-muted); display: block; font-size: 12px; line-height: 1.45; }
-        .plan.featured { border-color: #a7f3d0; background: #f0fdf4; }
-        [data-theme="dark"] .plan.featured { background: #12332a; border-color: #166534; }
         .fine-print { color: var(--text-muted); font-size: 12px; margin: 18px 0 0; }
-        @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } .plans { grid-template-columns: 1fr; } }
+        @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } }
       </style>
     </head>
     <body>
@@ -251,12 +239,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
           <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
           Sign in with Google
         </a>
-        <section class="plans" aria-label="Plans">
-          <div class="plan"><strong>Free</strong><span>$0 forever<br>10 summaries total</span></div>
-          <div class="plan featured"><strong>Pro Monthly</strong><span>$7 / month<br>250 summaries each month</span></div>
-          <div class="plan"><strong>Pro Yearly</strong><span>$59 / year<br>250 summaries each month</span></div>
-        </section>
-        <div class="fine-print">Sign in first; you can choose a Pro plan from your dashboard.</div>
+        <div class="fine-print">Free includes 10 summaries. Pro is $7/month or $59/year. Sign in to see plans and upgrade securely through Stripe.</div>
       </div>
 
       <script>
@@ -316,6 +299,20 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
   `;
 }
 
+function renderStripePricingPage(origin, user, token, env) {
+  if (!env.STRIPE_PRICING_TABLE_ID || !env.STRIPE_PUBLISHABLE_KEY) {
+    return renderMinimalAuthPage(origin, 'Pricing is not configured yet. Please try again shortly.');
+  }
+  return `<!DOCTYPE html>
+    <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Plans — Brief</title>
+    <script async src="https://js.stripe.com/v3/pricing-table.js"></script>
+    <style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:40px 20px}.wrap{margin:0 auto;max-width:920px}.top{align-items:center;display:flex;gap:14px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;font-size:14px;margin-left:auto;text-decoration:none}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 8px}p{color:#6b7280;margin:0 0 30px} </style></head>
+    <body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="${origin}/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div>
+    <h1>Choose the plan that works for you</h1><p>Free needs no payment method. Paid plans are managed securely by Stripe and can be cancelled there.</p>
+    <stripe-pricing-table pricing-table-id="${escapeHtml(env.STRIPE_PRICING_TABLE_ID)}" publishable-key="${escapeHtml(env.STRIPE_PUBLISHABLE_KEY)}" client-reference-id="${escapeHtml(user.id)}"></stripe-pricing-table>
+    </main></body></html>`;
+}
+
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -334,6 +331,13 @@ export default {
 
     if (url.pathname === "/" && req.method === "GET") {
       return new Response(renderMinimalAuthPage(origin), { headers: htmlHeaders });
+    }
+
+    if (url.pathname === "/pricing" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to view plans.'), { headers: htmlHeaders });
+      return new Response(renderStripePricingPage(origin, user, token, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
@@ -422,53 +426,6 @@ export default {
         success: true,
         user: { id: user.id, email: user.email, name: user.name, picture: user.picture, role: user.role || 'user', trial: trialInfo }
       }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
-    }
-
-    if (url.pathname === "/api/create-checkout-session" && req.method === "POST") {
-      const authHeader = req.headers.get("Authorization");
-      const user = await verifyTokenOrSession(authHeader, env);
-
-      if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
-      if (!env.STRIPE_SECRET_KEY) return new Response(JSON.stringify({ error: "Stripe API Key missing." }), { status: 500, headers: corsHeaders });
-
-      try {
-        const requestData = await req.json().catch(() => ({}));
-        const plan = stripePlanFor(requestData.plan);
-        const activeSessionToken = user.session_token || (authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader);
-
-        const params = new URLSearchParams();
-        params.append("payment_method_types[]", "card");
-        params.append("mode", "subscription");
-        params.append("customer_email", user.email);
-        params.append("client_reference_id", user.id);
-        params.append("line_items[0][price_data][currency]", "usd");
-        params.append("line_items[0][price_data][product_data][name]", plan.label);
-        params.append("line_items[0][price_data][unit_amount]", String(plan.amount));
-        params.append("line_items[0][price_data][recurring][interval]", plan.interval);
-        params.append("line_items[0][quantity]", "1");
-        params.append("metadata[plan]", plan.id);
-        params.append("subscription_data[metadata][plan]", plan.id);
-        params.append("success_url", `${origin}/dashboard?checkout=success&token=${activeSessionToken}`);
-        params.append("cancel_url", `${origin}/dashboard?checkout=cancel&token=${activeSessionToken}`);
-
-        const stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${env.STRIPE_SECRET_KEY}`,
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: params.toString()
-        });
-
-        const session = await stripeRes.json();
-        if (session.url) {
-          return new Response(JSON.stringify({ url: session.url }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
-        } else {
-          return new Response(JSON.stringify({ error: session.error?.message || "Stripe session creation failed." }), { status: 500, headers: corsHeaders });
-        }
-      } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
-      }
     }
 
     if (url.pathname === "/api/webhooks/stripe" && req.method === "POST") {
@@ -603,7 +560,7 @@ export default {
       const badgeStyle = trialInfo.status === 'admin' ? 'background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe;' : (trialInfo.status === 'active' ? 'background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;' : 'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;');
 
       const upgradeBtnHtml = (trialInfo.status !== 'active' && trialInfo.status !== 'admin') ? `
-        <span class="upgrade-control"><select id="planSelect" aria-label="Choose a Pro plan"><option value="monthly">Pro $7/mo</option><option value="yearly">Yearly $59/yr</option></select><button id="upgradeBtn" class="btn-upgrade">Upgrade</button></span>
+        <button id="upgradeBtn" class="btn-upgrade">Upgrade</button>
       ` : '';
 
       const html = `
@@ -626,8 +583,6 @@ export default {
             .status-badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 12px; }
             .btn-upgrade { background: #059669; color: #ffffff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
             .btn-upgrade:hover { background: #047857; }
-            .upgrade-control { align-items: center; display: inline-flex; gap: 6px; }
-            .upgrade-control select { background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font: inherit; font-size: 12px; padding: 5px 7px; }
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
@@ -739,27 +694,7 @@ export default {
           <script>
             const upgradeBtn = document.getElementById('upgradeBtn');
             if (upgradeBtn) {
-              upgradeBtn.onclick = async () => {
-                upgradeBtn.innerText = 'Redirecting...';
-                const plan = document.getElementById('planSelect').value;
-                try {
-                  const res = await fetch('/api/create-checkout-session', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ${token}', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ plan })
-                  });
-                  const data = await res.json();
-                  if (data.url) {
-                    window.location.href = data.url;
-                  } else {
-                    alert('Checkout Error: ' + (data.error || 'Failed to initialize payment.'));
-                    upgradeBtn.innerText = 'Upgrade';
-                  }
-                } catch (e) {
-                  alert('Connection error: ' + e.message);
-                  upgradeBtn.innerText = 'Upgrade';
-                }
-              };
+              upgradeBtn.onclick = () => { window.location.href = '/pricing?token=${encodeURIComponent(token)}'; };
             }
 
             const themeBtn = document.getElementById('themeToggleBtn');
