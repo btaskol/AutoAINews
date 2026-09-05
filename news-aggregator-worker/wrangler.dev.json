@@ -10,7 +10,8 @@
     }
   ],
   "vars": {
-    "READ_ONLY": "false"
+    "READ_ONLY": "false",
+    "SEED_TAG_DEMO": "true"
   },
   "d1_databases": [
     {

@@ -79,6 +79,33 @@ function calculateTrial(user, trialRecord) {
   };
 }
 
+async function seedTagDemo(env, user) {
+  if (env.SEED_TAG_DEMO !== 'true') return;
+  const existing = await env.DB.prepare('SELECT id FROM summaries WHERE user_id = ? LIMIT 1').bind(user.id).first();
+  if (existing) return;
+
+  await env.DB.prepare('INSERT INTO users (id, email, name, picture) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING')
+    .bind(user.id, user.email, user.name || '', user.picture || '').run();
+  const names = ['Product', 'Research', 'World News', 'Technology', 'Strategy', 'Leadership', 'AI', 'Markets', 'Design', 'Learning', 'Health', 'Climate', 'Security', 'Startups', 'Finance', 'Policy', 'Reading List', 'Ideas', 'Travel', 'Personal'];
+  for (const [index, name] of names.entries()) {
+    await env.DB.prepare('INSERT OR IGNORE INTO tags (user_id, name, is_pinned) VALUES (?, ?, ?)').bind(user.id, name, index < 4 ? 1 : 0).run();
+  }
+  const { results: tags } = await env.DB.prepare('SELECT id, name FROM tags WHERE user_id = ?').bind(user.id).all();
+  const tagIds = new Map(tags.map(tag => [tag.name, tag.id]));
+  const samples = [
+    ['[Test] AI product briefing', 'A test capture for the multi-tag dashboard. Use its chips to test combined categorisation.', ['AI', 'Product', 'Strategy']],
+    ['[Test] Market signals to watch', 'A test capture for filtering and pinning tags across related research notes.', ['Markets', 'Finance', 'Research']],
+    ['[Test] Design system notes', 'A test capture with a different tag combination to exercise the horizontal tag rail.', ['Design', 'Technology', 'Ideas']],
+    ['[Test] Security policy update', 'A test capture for checking search, tag counts, and pinned filters.', ['Security', 'Policy', 'World News']],
+    ['[Test] Learning plan', 'A test capture that shares one tag with other cards.', ['Learning', 'Personal', 'Ideas']]
+  ];
+  for (const [title, summary, sampleTags] of samples) {
+    const result = await env.DB.prepare('INSERT INTO summaries (user_id, title, custom_title, comment, url, summary) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(user.id, title, sampleTags.join(', '), 'Development-only test data', 'https://example.com', summary).run();
+    for (const name of sampleTags) await env.DB.prepare('INSERT OR IGNORE INTO summary_tags (summary_id, tag_id) VALUES (?, ?)').bind(result.meta.last_row_id, tagIds.get(name)).run();
+  }
+}
+
 function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
   const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   googleAuthUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
@@ -367,6 +394,8 @@ export default {
 
       const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
       const trialInfo = calculateTrial(user, trialRecord);
+
+      await seedTagDemo(env, user);
 
       const { results } = await env.DB.prepare(
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
