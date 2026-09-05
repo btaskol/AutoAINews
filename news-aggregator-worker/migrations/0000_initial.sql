@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS summaries (
   url TEXT NOT NULL,
   summary TEXT NOT NULL,
   snapshot_key TEXT,
+  is_pinned INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(user_id) REFERENCES users(id)
 );

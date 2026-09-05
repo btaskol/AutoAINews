@@ -104,6 +104,7 @@ async function seedTagDemo(env, user) {
       .bind(user.id, title, sampleTags.join(', '), 'Development-only test data', 'https://example.com', summary).run();
     for (const name of sampleTags) await env.DB.prepare('INSERT OR IGNORE INTO summary_tags (summary_id, tag_id) VALUES (?, ?)').bind(result.meta.last_row_id, tagIds.get(name)).run();
   }
+  await env.DB.prepare("UPDATE summaries SET is_pinned = 1 WHERE user_id = ? AND title = '[Test] AI product briefing'").bind(user.id).run();
 }
 
 function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
@@ -398,8 +399,9 @@ export default {
       await seedTagDemo(env, user);
 
       const { results } = await env.DB.prepare(
-        "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
+        "SELECT * FROM summaries WHERE user_id = ? ORDER BY is_pinned DESC, created_at DESC"
       ).bind(user.id).all();
+      const pinnedCount = results.filter(summary => summary.is_pinned).length;
 
       const { results: tags } = await env.DB.prepare(`
         SELECT tags.id, tags.name, tags.is_pinned, COUNT(summary_tags.summary_id) AS capture_count
@@ -424,18 +426,20 @@ export default {
           <button type="button" class="tag-scroll-arrow" id="tagScrollLeft" aria-label="Scroll tags left">‹</button>
           <div class="tag-chips" id="tagChips">
             <button type="button" class="tag-chip active" data-tag="">All <span>${results.length}</span></button>
+            ${pinnedCount ? `<button type="button" class="tag-chip" data-tag="__pinned__">★ Pinned <span>${pinnedCount}</span></button>` : ''}
             ${tags.map(tag => `<span class="tag-item"><button type="button" class="tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)} <span>${tag.capture_count}</span></button><button type="button" class="tag-pin ${tag.is_pinned ? 'pinned' : ''}" onclick="toggleTagPin('${tag.id}', ${tag.is_pinned ? 'false' : 'true'})" aria-label="${tag.is_pinned ? 'Unpin' : 'Pin'} ${escapeHtml(tag.name)}">★</button></span>`).join('')}
           </div>
           <button type="button" class="tag-scroll-arrow" id="tagScrollRight" aria-label="Scroll tags right">›</button>
         </div>` : '';
 
       const cardsHtml = results.length > 0 ? results.map(s => `
-        <div id="card-${s.id}" class="card" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
+        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
           <div class="card-header">
             <span id="tag-display-${s.id}" class="card-tag">${(tagsBySummary.get(s.id) || []).map(tag => `<button type="button" class="card-tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`).join('') || "Web Capture"}</span>
             <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml((tagsBySummary.get(s.id) || []).map(tag => tag.name).join(', '))}" style="display:none;" placeholder="Tags (comma-separated)">
             <div class="card-meta">
               <span>${escapeHtml(s.created_at) || "Recent"}</span>
+              <button onclick="toggleSummaryPin('${s.id}', ${s.is_pinned ? 'false' : 'true'})" class="btn-pin ${s.is_pinned ? 'pinned' : ''}" aria-label="${s.is_pinned ? 'Unpin' : 'Pin'} saved brief">★</button>
               <button id="btn-edit-${s.id}" onclick="enableCardEdit('${s.id}')" class="btn-text">Edit</button>
               <button onclick="deleteSummary('${s.id}')" class="btn-text-danger">Delete</button>
             </div>
@@ -516,6 +520,8 @@ export default {
             .btn-text:hover { color: var(--text); }
             .btn-text-danger { background: none; border: none; color: #dc2626; cursor: pointer; font-size: 12px; padding: 0; }
             .btn-text-danger:hover { text-decoration: underline; }
+            .btn-pin { background: none; border: none; color: #cbd5e1; cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+            .btn-pin.pinned, .btn-pin:hover { color: #eab308; }
             .profile-dropdown { position: relative; }
             .dropdown-menu { display: none; position: absolute; right: 0; top: 36px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100; padding: 4px 0; }
             .dropdown-menu.show { display: block; }
@@ -729,7 +735,7 @@ export default {
 
               cards.forEach(card => {
                 const matchesSearch = card.innerText.toLocaleLowerCase().includes(query);
-                const matchesTag = !activeTag || (card.dataset.tags || '').split(',').includes(activeTag);
+                const matchesTag = !activeTag || (activeTag === '__pinned__' ? card.dataset.pinned === 'true' : (card.dataset.tags || '').split(',').includes(activeTag));
                 const isVisible = matchesSearch && matchesTag;
                 card.style.display = isVisible ? 'block' : 'none';
                 if (isVisible) visibleCount++;
@@ -830,6 +836,21 @@ export default {
                 alert('Error updating tag preference: ' + e.message);
               }
             }
+
+            async function toggleSummaryPin(id, pinned) {
+              try {
+                const res = await fetch('/api/summary/pin', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${token}' },
+                  body: JSON.stringify({ id, pinned })
+                });
+                const data = await res.json();
+                if (data.success) window.location.reload();
+                else alert(data.error || 'Could not update saved brief pin.');
+              } catch (e) {
+                alert('Error updating saved brief pin: ' + e.message);
+              }
+            }
           </script>
         </body>
         </html>
@@ -879,6 +900,17 @@ export default {
         return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Tag update error: " + err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    if (url.pathname === "/api/summary/pin" && req.method === "POST") {
+      try {
+        const { id, pinned } = await req.json();
+        await env.DB.prepare("UPDATE summaries SET is_pinned = ? WHERE id = ? AND user_id = ?")
+          .bind(pinned ? 1 : 0, id, user.id).run();
+        return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Brief pin error: " + err.message }), { status: 500, headers: corsHeaders });
       }
     }
 
