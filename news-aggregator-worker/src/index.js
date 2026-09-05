@@ -11,6 +11,8 @@ const htmlHeaders = {
 
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 const MAX_SUMMARY_SOURCE_CHARS = 12000;
+const FREE_SUMMARY_LIMIT = 10;
+const PRO_MONTHLY_SUMMARY_LIMIT = 250;
 
 function prepareSourceForSummary(value) {
   const text = String(value || '')
@@ -35,6 +37,40 @@ function formatGroundedSummary(data, sourceLength) {
   if (caveat) sections.push(`Source note\n${caveat}`);
   if (sourceLength >= MAX_SUMMARY_SOURCE_CHARS) sections.push('Source note\nThe source was shortened before summarization because it exceeded the article limit.');
   return sections.join('\n\n');
+}
+
+function usagePeriodFor(user) {
+  if (user?.role === 'admin' || user?.subscription_status === 'active') {
+    return new Date().toISOString().slice(0, 7);
+  }
+  return 'lifetime';
+}
+
+function summaryLimitFor(user) {
+  if (user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com') return Number.MAX_SAFE_INTEGER;
+  return user?.subscription_status === 'active' ? PRO_MONTHLY_SUMMARY_LIMIT : FREE_SUMMARY_LIMIT;
+}
+
+async function reserveSummaryQuota(env, user) {
+  const periodKey = usagePeriodFor(user);
+  const limit = summaryLimitFor(user);
+  if (limit === Number.MAX_SAFE_INTEGER) return { allowed: true, periodKey, limit };
+  await env.DB.prepare('INSERT OR IGNORE INTO summary_usage (user_id, period_key) VALUES (?, ?)').bind(user.id, periodKey).run();
+  const result = await env.DB.prepare(`UPDATE summary_usage SET summary_count = summary_count + 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND period_key = ? AND summary_count < ?`)
+    .bind(user.id, periodKey, limit).run();
+  return { allowed: result.meta?.changes === 1, periodKey, limit };
+}
+
+async function recordSummaryTokens(env, user, periodKey, usage) {
+  if (!periodKey) return;
+  await env.DB.prepare('UPDATE summary_usage SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND period_key = ?')
+    .bind(usage?.prompt_tokens || 0, usage?.completion_tokens || 0, user.id, periodKey).run();
+}
+
+async function releaseSummaryQuota(env, user, periodKey) {
+  if (!periodKey || summaryLimitFor(user) === Number.MAX_SAFE_INTEGER) return;
+  await env.DB.prepare('UPDATE summary_usage SET summary_count = MAX(0, summary_count - 1), updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND period_key = ?')
+    .bind(user.id, periodKey).run();
 }
 
 function escapeHtml(str) {
@@ -971,6 +1007,16 @@ export default {
         }), { status: 402, headers: corsHeaders });
       }
 
+      const quota = await reserveSummaryQuota(env, user);
+      if (!quota.allowed) {
+        const planName = user?.subscription_status === 'active' ? 'Pro' : 'Free';
+        return new Response(JSON.stringify({
+          error: `${planName} summary limit reached. Please wait for the next billing month or upgrade your plan.`,
+          quotaExceeded: true,
+          limit: quota.limit
+        }), { status: 429, headers: corsHeaders });
+      }
+
       try {
         const { pageText } = await req.json();
         const sourceText = prepareSourceForSummary(pageText);
@@ -1007,7 +1053,10 @@ export default {
             if (groqData.choices?.[0]?.message?.content) {
               try {
                 summary = formatGroundedSummary(JSON.parse(groqData.choices[0].message.content), sourceText.length);
-                if (summary) break;
+                if (summary) {
+                  await recordSummaryTokens(env, user, quota.periodKey, groqData.usage);
+                  break;
+                }
                 lastError = "Model returned an incomplete structured summary.";
               } catch (error) {
                 lastError = "Model returned an invalid structured summary.";
@@ -1021,11 +1070,13 @@ export default {
         }
 
         if (!summary) {
+          await releaseSummaryQuota(env, user, quota.periodKey);
           return new Response(JSON.stringify({ error: "Groq Error: " + (lastError || "No accessible models found.") }), { status: 500, headers: corsHeaders });
         }
 
         return new Response(JSON.stringify({ summary }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
+        await releaseSummaryQuota(env, user, quota.periodKey);
         return new Response(JSON.stringify({ error: "AI Error: " + err.message }), { status: 500, headers: corsHeaders });
       }
     }
