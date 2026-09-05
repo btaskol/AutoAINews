@@ -11,6 +11,18 @@
     .save-section { display: none; margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
     input, textarea { width: 100%; padding: 7px; margin: 4px 0 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; box-sizing: border-box; }
     .save-btn { background: #16a34a; }
+
+    /* Tagging UI styles (keeps tone/color minimal, consistent) */
+    .tag-area { margin-top: 8px; display:flex; flex-wrap:wrap; gap:6px; }
+    .tag-chip {
+      display:inline-flex; align-items:center; gap:6px;
+      background:#eef2ff; color:#1e293b; padding:6px 8px; border-radius:16px; font-size:12px;
+      cursor:pointer; user-select:none;
+    }
+    .tag-chip.suggested { background:#fff7ed; border:1px dashed #f59e0b; }
+    .tag-chip.accepted { background:#dcfce7; border:1px solid #16a34a; }
+    .tag-actions { margin-top:8px; display:flex; gap:8px; }
+    .tag-actions button { padding:6px 8px; font-size:12px; width:auto; }
   </style>
 </head>
 <body>
@@ -25,10 +37,18 @@
     <label for="comment"><strong>Comment / Notes (Optional):</strong></label>
     <textarea id="comment" rows="2" placeholder="e.g., Review this before Friday's meeting"></textarea>
 
+    <!-- Tag area -->
+    <div id="tagArea" class="tag-area" aria-live="polite"></div>
+    <div class="tag-actions">
+      <button id="acceptAllTags" style="display:none">Accept all suggestions</button>
+      <button id="ignoreAllTags" style="display:none">Ignore suggestions</button>
+    </div>
+
     <button id="saveBtn" class="save-btn">📌 Save to Dashboard</button>
     <div id="saveStatus" style="font-size: 12px; margin-top: 6px;"></div>
   </div>
 
+  <script src="tagger.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
