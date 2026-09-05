@@ -340,8 +340,29 @@ export default {
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
       ).bind(user.id).all();
 
+      // Keep tags user-created: the fallback "Web Capture" is useful on a card,
+      // but it should not turn into a category in the filter bar.
+      const tagsByName = new Map();
+      results.forEach(summary => {
+        const name = (summary.custom_title || '').trim();
+        if (!name) return;
+        const key = name.toLocaleLowerCase();
+        const tag = tagsByName.get(key);
+        if (tag) tag.count += 1;
+        else tagsByName.set(key, { name, key, count: 1 });
+      });
+      const tags = [...tagsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+      const tagFiltersHtml = tags.length > 0 ? `
+        <div class="tag-filter" aria-label="Filter briefs by tag">
+          <span class="tag-filter-label">Tags</span>
+          <div class="tag-chips" id="tagChips">
+            <button type="button" class="tag-chip active" data-tag="">All <span>${results.length}</span></button>
+            ${tags.map(tag => `<button type="button" class="tag-chip" data-tag="${escapeHtml(tag.key)}">${escapeHtml(tag.name)} <span>${tag.count}</span></button>`).join('')}
+          </div>
+        </div>` : '';
+
       const cardsHtml = results.length > 0 ? results.map(s => `
-        <div id="card-${s.id}" class="card">
+        <div id="card-${s.id}" class="card" data-tag="${escapeHtml((s.custom_title || '').trim().toLocaleLowerCase())}">
           <div class="card-header">
             <span id="tag-display-${s.id}" class="card-tag">${escapeHtml(s.custom_title) || "Web Capture"}</span>
             <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml(s.custom_title)}" style="display:none;" placeholder="Tag / Category">
@@ -404,6 +425,14 @@ export default {
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
+            .tag-filter { display: flex; align-items: flex-start; gap: 12px; margin: -10px 0 24px; }
+            .tag-filter-label { color: var(--text-muted); font-size: 12px; font-weight: 500; line-height: 30px; flex: 0 0 auto; }
+            .tag-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+            .tag-chip { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; color: var(--text-muted); cursor: pointer; font-family: inherit; font-size: 12px; line-height: 1; padding: 7px 10px; transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+            .tag-chip:hover { background: var(--sub-bg); border-color: #cbd5e1; color: var(--text); }
+            .tag-chip.active { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
+            [data-theme="dark"] .tag-chip.active { background: #0c4a6e; border-color: #0369a1; color: #e0f2fe; }
+            .tag-chip span { font-size: 11px; margin-left: 3px; opacity: 0.75; }
             .btn-secondary { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
             .btn-secondary:hover { background: var(--sub-bg); }
             .btn-secondary-sm { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; }
@@ -437,6 +466,7 @@ export default {
             .resource-link { font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 500; }
             .resource-link:hover { text-decoration: underline; }
             .empty-state { text-align: center; padding: 48px 20px; color: var(--text-muted); background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
+            @media (max-width: 560px) { .tag-filter { display: block; } .tag-filter-label { display: block; line-height: 1; margin-bottom: 8px; } }
           </style>
         </head>
         <body>
@@ -484,6 +514,7 @@ export default {
           <div class="search-container">
             <input type="text" id="searchInput" class="search-input" placeholder="Search briefs, tags, or notes...">
           </div>
+          ${tagFiltersHtml}
 
           <main id="cardsContainer">${cardsHtml}</main>
           <div id="noSearchResults" class="empty-state" style="display: none;">No matching briefs found.</div>
@@ -576,7 +607,9 @@ export default {
                 if (data.success) {
                   document.getElementById('tag-display-' + id).innerText = customTitle || 'Web Capture';
                   document.getElementById('title-display-' + id).innerText = title || 'Untitled';
-                  cancelCardEdit(id);
+                  // A tag change can add, rename, or remove one of the filter chips.
+                  // Reloading keeps that category list and its counts authoritative.
+                  window.location.reload();
                 } else {
                   alert('Failed to save changes: ' + (data.error || 'Unknown error'));
                 }
@@ -609,28 +642,34 @@ export default {
             window.addEventListener('DOMContentLoaded', initExpandButtons);
 
             const searchInput = document.getElementById('searchInput');
-            if (searchInput) {
-              searchInput.addEventListener('input', (e) => {
-                const query = e.target.value.toLowerCase().trim();
-                const cards = document.querySelectorAll('.card');
-                let visibleCount = 0;
+            const tagChips = document.getElementById('tagChips');
+            let activeTag = '';
 
-                cards.forEach(card => {
-                  const content = card.innerText.toLowerCase();
-                  if (content.includes(query)) {
-                    card.style.display = 'block';
-                    visibleCount++;
-                  } else {
-                    card.style.display = 'none';
-                  }
-                });
+            function applyFilters() {
+              const query = (searchInput?.value || '').toLocaleLowerCase().trim();
+              const cards = document.querySelectorAll('.card');
+              let visibleCount = 0;
 
-                const noResults = document.getElementById('noSearchResults');
-                if (noResults) {
-                  noResults.style.display = (visibleCount === 0 && cards.length > 0) ? 'block' : 'none';
-                }
+              cards.forEach(card => {
+                const matchesSearch = card.innerText.toLocaleLowerCase().includes(query);
+                const matchesTag = !activeTag || card.dataset.tag === activeTag;
+                const isVisible = matchesSearch && matchesTag;
+                card.style.display = isVisible ? 'block' : 'none';
+                if (isVisible) visibleCount++;
               });
+
+              const noResults = document.getElementById('noSearchResults');
+              if (noResults) noResults.style.display = (visibleCount === 0 && cards.length > 0) ? 'block' : 'none';
             }
+
+            searchInput?.addEventListener('input', applyFilters);
+            tagChips?.addEventListener('click', (event) => {
+              const chip = event.target.closest('.tag-chip');
+              if (!chip) return;
+              activeTag = chip.dataset.tag || '';
+              tagChips.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', item === chip));
+              applyFilters();
+            });
 
             const profBtn = document.getElementById('profBtn');
             const profMenu = document.getElementById('profMenu');
