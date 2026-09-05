@@ -372,32 +372,39 @@ export default {
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY created_at DESC"
       ).bind(user.id).all();
 
-      // Keep tags user-created: the fallback "Web Capture" is useful on a card,
-      // but it should not turn into a category in the filter bar.
-      const tagsByName = new Map();
-      results.forEach(summary => {
-        const name = (summary.custom_title || '').trim();
-        if (!name) return;
-        const key = name.toLocaleLowerCase();
-        const tag = tagsByName.get(key);
-        if (tag) tag.count += 1;
-        else tagsByName.set(key, { name, key, count: 1 });
+      const { results: tags } = await env.DB.prepare(`
+        SELECT tags.id, tags.name, tags.is_pinned, COUNT(summary_tags.summary_id) AS capture_count
+        FROM tags LEFT JOIN summary_tags ON summary_tags.tag_id = tags.id
+        WHERE tags.user_id = ?
+        GROUP BY tags.id ORDER BY tags.is_pinned DESC, tags.name COLLATE NOCASE
+      `).bind(user.id).all();
+      const { results: summaryTagRows } = await env.DB.prepare(`
+        SELECT summary_tags.summary_id, tags.id, tags.name
+        FROM summary_tags JOIN tags ON tags.id = summary_tags.tag_id
+        WHERE tags.user_id = ? ORDER BY tags.is_pinned DESC, tags.name COLLATE NOCASE
+      `).bind(user.id).all();
+      const tagsBySummary = new Map();
+      summaryTagRows.forEach(row => {
+        const list = tagsBySummary.get(row.summary_id) || [];
+        list.push(row);
+        tagsBySummary.set(row.summary_id, list);
       });
-      const tags = [...tagsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
       const tagFiltersHtml = tags.length > 0 ? `
         <div class="tag-filter" aria-label="Filter briefs by tag">
           <span class="tag-filter-label">Tags</span>
+          <button type="button" class="tag-scroll-arrow" id="tagScrollLeft" aria-label="Scroll tags left">‹</button>
           <div class="tag-chips" id="tagChips">
             <button type="button" class="tag-chip active" data-tag="">All <span>${results.length}</span></button>
-            ${tags.map(tag => `<button type="button" class="tag-chip" data-tag="${escapeHtml(tag.key)}">${escapeHtml(tag.name)} <span>${tag.count}</span></button>`).join('')}
+            ${tags.map(tag => `<span class="tag-item"><button type="button" class="tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)} <span>${tag.capture_count}</span></button><button type="button" class="tag-pin ${tag.is_pinned ? 'pinned' : ''}" onclick="toggleTagPin('${tag.id}', ${tag.is_pinned ? 'false' : 'true'})" aria-label="${tag.is_pinned ? 'Unpin' : 'Pin'} ${escapeHtml(tag.name)}">★</button></span>`).join('')}
           </div>
+          <button type="button" class="tag-scroll-arrow" id="tagScrollRight" aria-label="Scroll tags right">›</button>
         </div>` : '';
 
       const cardsHtml = results.length > 0 ? results.map(s => `
-        <div id="card-${s.id}" class="card" data-tag="${escapeHtml((s.custom_title || '').trim().toLocaleLowerCase())}">
+        <div id="card-${s.id}" class="card" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
           <div class="card-header">
-            <span id="tag-display-${s.id}" class="card-tag">${escapeHtml(s.custom_title) || "Web Capture"}</span>
-            <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml(s.custom_title)}" style="display:none;" placeholder="Tag / Category">
+            <span id="tag-display-${s.id}" class="card-tag">${(tagsBySummary.get(s.id) || []).map(tag => `<button type="button" class="card-tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`).join('') || "Web Capture"}</span>
+            <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml((tagsBySummary.get(s.id) || []).map(tag => tag.name).join(', '))}" style="display:none;" placeholder="Tags (comma-separated)">
             <div class="card-meta">
               <span>${escapeHtml(s.created_at) || "Recent"}</span>
               <button id="btn-edit-${s.id}" onclick="enableCardEdit('${s.id}')" class="btn-text">Edit</button>
@@ -457,14 +464,21 @@ export default {
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
-            .tag-filter { display: flex; align-items: flex-start; gap: 12px; margin: -10px 0 24px; }
+            .tag-filter { display: flex; align-items: center; gap: 8px; margin: -10px 0 24px; }
             .tag-filter-label { color: var(--text-muted); font-size: 12px; font-weight: 500; line-height: 30px; flex: 0 0 auto; }
-            .tag-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-            .tag-chip { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; color: var(--text-muted); cursor: pointer; font-family: inherit; font-size: 12px; line-height: 1; padding: 7px 10px; transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+            .tag-chips { display: flex; flex: 1; gap: 8px; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; padding: 2px 0; scrollbar-width: none; scroll-behavior: smooth; }
+            .tag-chips::-webkit-scrollbar { display: none; }
+            .tag-chip { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; color: var(--text-muted); cursor: pointer; flex: 0 0 auto; font-family: inherit; font-size: 12px; line-height: 1; padding: 7px 10px; transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
             .tag-chip:hover { background: var(--sub-bg); border-color: #cbd5e1; color: var(--text); }
             .tag-chip.active { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
             [data-theme="dark"] .tag-chip.active { background: #0c4a6e; border-color: #0369a1; color: #e0f2fe; }
             .tag-chip span { font-size: 11px; margin-left: 3px; opacity: 0.75; }
+            .tag-item { align-items: center; display: flex; flex: 0 0 auto; }
+            .tag-item .tag-chip { border-radius: 16px 0 0 16px; }
+            .tag-pin { background: var(--card-bg); border: 1px solid var(--border); border-left: 0; border-radius: 0 16px 16px 0; color: #cbd5e1; cursor: pointer; font-size: 13px; height: 28px; padding: 0 8px 0 4px; }
+            .tag-pin.pinned, .tag-pin:hover { color: #eab308; }
+            .tag-scroll-arrow { background: var(--card-bg); border: 1px solid var(--border); border-radius: 50%; color: var(--text-muted); cursor: pointer; flex: 0 0 auto; font-size: 20px; height: 26px; line-height: 18px; padding: 0; width: 26px; }
+            .tag-scroll-arrow:hover { color: var(--text); background: var(--sub-bg); }
             .btn-secondary { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
             .btn-secondary:hover { background: var(--sub-bg); }
             .btn-secondary-sm { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; }
@@ -481,7 +495,9 @@ export default {
             .dropdown-item.danger { color: #dc2626; border-top: 1px solid var(--border); }
             .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
             .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-            .card-tag { font-size: 12px; font-weight: 500; color: var(--accent); }
+            .card-tag { display: flex; flex-wrap: wrap; gap: 6px; }
+            .card-tag-chip { background: #eff6ff; border: 0; border-radius: 12px; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; padding: 3px 7px; }
+            [data-theme="dark"] .card-tag-chip { background: #0c4a6e; }
             .card-meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-muted); }
             .card-title { font-size: 15px; font-weight: 600; margin: 0 0 12px 0; color: var(--text); }
             .card-input-inline { font-size: 12px; padding: 4px 8px; background: var(--sub-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: none; width: 50%; }
@@ -684,7 +700,7 @@ export default {
 
               cards.forEach(card => {
                 const matchesSearch = card.innerText.toLocaleLowerCase().includes(query);
-                const matchesTag = !activeTag || card.dataset.tag === activeTag;
+                const matchesTag = !activeTag || (card.dataset.tags || '').split(',').includes(activeTag);
                 const isVisible = matchesSearch && matchesTag;
                 card.style.display = isVisible ? 'block' : 'none';
                 if (isVisible) visibleCount++;
@@ -702,6 +718,16 @@ export default {
               tagChips.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', item === chip));
               applyFilters();
             });
+            document.querySelectorAll('.card-tag-chip').forEach(chip => {
+              chip.addEventListener('click', () => {
+                activeTag = chip.dataset.tag || '';
+                tagChips?.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', item.dataset.tag === activeTag));
+                applyFilters();
+                document.querySelector('.tag-filter')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+              });
+            });
+            document.getElementById('tagScrollLeft')?.addEventListener('click', () => tagChips?.scrollBy({ left: -260, behavior: 'smooth' }));
+            document.getElementById('tagScrollRight')?.addEventListener('click', () => tagChips?.scrollBy({ left: 260, behavior: 'smooth' }));
 
             const profBtn = document.getElementById('profBtn');
             const profMenu = document.getElementById('profMenu');
@@ -760,6 +786,21 @@ export default {
                 alert('Error: ' + e.message);
               }
             }
+
+            async function toggleTagPin(id, pinned) {
+              try {
+                const res = await fetch('/api/tag/pin', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${token}' },
+                  body: JSON.stringify({ id, pinned })
+                });
+                const data = await res.json();
+                if (data.success) window.location.reload();
+                else alert(data.error || 'Could not update tag preference.');
+              } catch (e) {
+                alert('Error updating tag preference: ' + e.message);
+              }
+            }
           </script>
         </body>
         </html>
@@ -787,9 +828,28 @@ export default {
           "UPDATE summaries SET title = ?, custom_title = ?, comment = ? WHERE id = ? AND user_id = ?"
         ).bind(title || "Untitled", customTitle || "", comment || "", id, user.id).run();
 
+        const tagNames = [...new Set((customTitle || '').split(',').map(name => name.trim()).filter(Boolean))].slice(0, 12);
+        await env.DB.prepare("DELETE FROM summary_tags WHERE summary_id = ?").bind(id).run();
+        for (const name of tagNames) {
+          await env.DB.prepare("INSERT OR IGNORE INTO tags (user_id, name) VALUES (?, ?)").bind(user.id, name).run();
+          const tag = await env.DB.prepare("SELECT id FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE").bind(user.id, name).first();
+          if (tag) await env.DB.prepare("INSERT OR IGNORE INTO summary_tags (summary_id, tag_id) VALUES (?, ?)").bind(id, tag.id).run();
+        }
+
         return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Update Error: " + err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    if (url.pathname === "/api/tag/pin" && req.method === "POST") {
+      try {
+        const { id, pinned } = await req.json();
+        await env.DB.prepare("UPDATE tags SET is_pinned = ? WHERE id = ? AND user_id = ?")
+          .bind(pinned ? 1 : 0, id, user.id).run();
+        return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Tag update error: " + err.message }), { status: 500, headers: corsHeaders });
       }
     }
 
@@ -883,9 +943,21 @@ export default {
       const snapshotKey = `snapshots/${user.id}/snapshot-${Date.now()}.txt`;
       await env.SNAPSHOTS.put(snapshotKey, pageText || "");
 
-      await env.DB.prepare(
+      const savedSummary = await env.DB.prepare(
         "INSERT INTO summaries (user_id, title, custom_title, comment, url, summary, snapshot_key) VALUES (?, ?, ?, ?, ?, ?, ?)"
       ).bind(user.id, title, customTitle || "", comment || "", articleUrl, summary, snapshotKey).run();
+
+      // Preserve the extension's existing single Tag / Custom Title field while
+      // storing it in the new many-to-many tag model for the dashboard.
+      const initialTag = (customTitle || '').trim();
+      if (initialTag && savedSummary.meta?.last_row_id) {
+        await env.DB.prepare("INSERT OR IGNORE INTO tags (user_id, name) VALUES (?, ?)").bind(user.id, initialTag).run();
+        const tag = await env.DB.prepare("SELECT id FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE").bind(user.id, initialTag).first();
+        if (tag) {
+          await env.DB.prepare("INSERT OR IGNORE INTO summary_tags (summary_id, tag_id) VALUES (?, ?)")
+            .bind(savedSummary.meta.last_row_id, tag.id).run();
+        }
+      }
 
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
