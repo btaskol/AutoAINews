@@ -232,7 +232,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false) {
       <div class="login-card">
         <div class="logo-mark">B</div>
         <h1>Brief</h1>
-        <p>Capture the web, get grounded summaries, and keep the ideas worth returning to.</p>
+        <p>Capture what matters from the web, get a grounded summary, and build a searchable personal library.</p>
         <ul class="value-list"><li>Save pages from Chrome</li><li>Organize with tags and pins</li><li>Search your personal library</li></ul>
         <div id="statusMsg" class="message" style="${message ? '' : 'display:none;'}">${escapeHtml(message)}</div>
         <a href="${googleAuthUrl.href}" id="loginBtn" class="btn-google">
