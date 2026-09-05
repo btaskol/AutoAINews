@@ -726,7 +726,7 @@ export default {
 
             const searchInput = document.getElementById('searchInput');
             const tagChips = document.getElementById('tagChips');
-            let activeTag = '';
+            const activeTags = new Set();
 
             function applyFilters() {
               const query = (searchInput?.value || '').toLocaleLowerCase().trim();
@@ -735,7 +735,8 @@ export default {
 
               cards.forEach(card => {
                 const matchesSearch = card.innerText.toLocaleLowerCase().includes(query);
-                const matchesTag = !activeTag || (activeTag === '__pinned__' ? card.dataset.pinned === 'true' : (card.dataset.tags || '').split(',').includes(activeTag));
+                const cardTags = (card.dataset.tags || '').split(',');
+                const matchesTag = [...activeTags].every(tag => tag === '__pinned__' ? card.dataset.pinned === 'true' : cardTags.includes(tag));
                 const isVisible = matchesSearch && matchesTag;
                 card.style.display = isVisible ? 'block' : 'none';
                 if (isVisible) visibleCount++;
@@ -749,14 +750,18 @@ export default {
             tagChips?.addEventListener('click', (event) => {
               const chip = event.target.closest('.tag-chip');
               if (!chip) return;
-              activeTag = chip.dataset.tag || '';
-              tagChips.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', item === chip));
+              const tag = chip.dataset.tag || '';
+              if (!tag) activeTags.clear();
+              else if (activeTags.has(tag)) activeTags.delete(tag);
+              else activeTags.add(tag);
+              tagChips.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', !item.dataset.tag ? activeTags.size === 0 : activeTags.has(item.dataset.tag)));
               applyFilters();
             });
             document.querySelectorAll('.card-tag-chip').forEach(chip => {
               chip.addEventListener('click', () => {
-                activeTag = chip.dataset.tag || '';
-                tagChips?.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', item.dataset.tag === activeTag));
+                const tag = chip.dataset.tag || '';
+                if (tag) activeTags.add(tag);
+                tagChips?.querySelectorAll('.tag-chip').forEach(item => item.classList.toggle('active', !item.dataset.tag ? activeTags.size === 0 : activeTags.has(item.dataset.tag)));
                 applyFilters();
                 document.querySelector('.tag-filter')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
               });
