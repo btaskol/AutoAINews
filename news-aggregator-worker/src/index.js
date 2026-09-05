@@ -185,6 +185,15 @@ export default {
     const url = new URL(req.url);
     const origin = url.origin;
 
+    // The temporary tag-filter Worker intentionally reads production captures
+    // without allowing a test session to create, edit, delete, or charge anything.
+    if (env.READ_ONLY === "true" && req.method !== "GET" && req.method !== "HEAD") {
+      return new Response(JSON.stringify({ error: "This temporary test environment is read-only." }), {
+        status: 403,
+        headers: { "Content-Type": "application/json", ...corsHeaders }
+      });
+    }
+
     if (url.pathname === "/" && req.method === "GET") {
       return new Response(renderMinimalAuthPage(origin), { headers: htmlHeaders });
     }

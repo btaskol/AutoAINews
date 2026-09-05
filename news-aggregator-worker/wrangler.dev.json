@@ -1,0 +1,22 @@
+{
+  "name": "brief-dev-tag-filters",
+  "main": "src/index.js",
+  "compatibility_date": "2024-01-01",
+  "workers_dev": true,
+  "vars": {
+    "READ_ONLY": "true"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "news-db",
+      "database_id": "81b3d774-ad73-49a3-8614-e2f763081b25"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SNAPSHOTS",
+      "bucket_name": "news-snapshots"
+    }
+  ]
+}
