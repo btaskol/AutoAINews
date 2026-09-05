@@ -187,7 +187,7 @@ export default {
 
     // The temporary tag-filter Worker intentionally reads production captures
     // without allowing a test session to create, edit, delete, or charge anything.
-    if (env.READ_ONLY === "true" && req.method !== "GET" && req.method !== "HEAD") {
+    if (env.READ_ONLY === "true" && req.method !== "GET" && req.method !== "HEAD" && url.pathname !== "/api/auth/google") {
       return new Response(JSON.stringify({ error: "This temporary test environment is read-only." }), {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders }
@@ -204,6 +204,29 @@ export default {
         const googleUser = await verifyGoogleToken(googleToken);
 
         if (!googleUser) return new Response(JSON.stringify({ error: "Invalid Google Token" }), { status: 401, headers: corsHeaders });
+
+        // In the temporary environment, verify Google identity without changing
+        // the production user record or replacing its normal session token.
+        // Google ID tokens are already accepted by verifyTokenOrSession and expire
+        // quickly, making this appropriate only for a read-only test dashboard.
+        if (env.READ_ONLY === "true") {
+          const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
+          const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(googleUser.email).first();
+          const trialInfo = calculateTrial(dbUser || googleUser, trialRecord);
+
+          return new Response(JSON.stringify({
+            success: true,
+            user: {
+              id: googleUser.sub,
+              email: googleUser.email,
+              name: googleUser.name,
+              picture: googleUser.picture,
+              role: dbUser?.role || 'user',
+              trial: trialInfo
+            },
+            sessionToken: googleToken
+          }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
 
         const appSessionToken = crypto.randomUUID();
         const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
