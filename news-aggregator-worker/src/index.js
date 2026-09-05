@@ -51,7 +51,7 @@ function containsActionableHarmfulInstructions(text) {
 }
 
 function usagePeriodFor(user) {
-  if (user?.role === 'admin' || user?.subscription_status === 'active') {
+  if (user?.role === 'admin' || ['active', 'canceling'].includes(user?.subscription_status)) {
     return new Date().toISOString().slice(0, 7);
   }
   return 'lifetime';
@@ -59,7 +59,7 @@ function usagePeriodFor(user) {
 
 function summaryLimitFor(user) {
   if (user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com') return Number.MAX_SAFE_INTEGER;
-  return user?.subscription_status === 'active' ? PRO_MONTHLY_SUMMARY_LIMIT : FREE_SUMMARY_LIMIT;
+  return ['active', 'canceling'].includes(user?.subscription_status) ? PRO_MONTHLY_SUMMARY_LIMIT : FREE_SUMMARY_LIMIT;
 }
 
 async function reserveSummaryQuota(env, user) {
@@ -133,7 +133,7 @@ function calculateTrial(user, trialRecord) {
     return { allowed: true, status: 'admin', daysLeft: 999 };
   }
 
-  if (user?.subscription_status === 'active') {
+  if (['active', 'canceling'].includes(user?.subscription_status)) {
     return { allowed: true, status: 'active', daysLeft: 0 };
   }
 
@@ -449,14 +449,14 @@ export default {
         if (body.type === "customer.subscription.updated") {
           const isActive = eventObject.status === 'active' || eventObject.status === 'trialing';
           await env.DB.prepare(`
-            UPDATE users SET subscription_status = ?, subscription_interval = ? WHERE stripe_subscription_id = ?
-          `).bind(isActive ? 'active' : eventObject.status || 'inactive', eventObject.metadata?.plan || 'monthly', eventObject.id).run();
+            UPDATE users SET subscription_status = ?, subscription_interval = ?, cancel_at_period_end = ? WHERE stripe_subscription_id = ?
+          `).bind(isActive ? (eventObject.cancel_at_period_end ? 'canceling' : 'active') : eventObject.status || 'inactive', eventObject.metadata?.plan || 'monthly', eventObject.cancel_at_period_end ? 1 : 0, eventObject.id).run();
         }
 
         if (body.type === "customer.subscription.deleted" || body.type === "invoice.payment_failed") {
           const subscriptionId = body.type === 'invoice.payment_failed' ? eventObject.subscription : eventObject.id;
           if (subscriptionId) {
-            await env.DB.prepare("UPDATE users SET subscription_status = 'inactive' WHERE stripe_subscription_id = ?")
+            await env.DB.prepare("UPDATE users SET subscription_status = 'inactive', cancel_at_period_end = 0 WHERE stripe_subscription_id = ?")
               .bind(subscriptionId).run();
           }
         }
@@ -677,6 +677,7 @@ export default {
                 <button class="btn-secondary" id="profBtn">${escapeHtml(user.email)}</button>
                 <div class="dropdown-menu" id="profMenu">
                   <button class="dropdown-item" id="logoutBtn">Sign Out</button>
+                  ${['active', 'canceling'].includes(user.subscription_status) && user.stripe_customer_id ? '<button class="dropdown-item" id="manageBillingBtn">Manage subscription</button>' : ''}
                   <button class="dropdown-item danger" id="deleteBtn">Delete Account</button>
                 </div>
               </div>
@@ -857,8 +858,30 @@ export default {
               }, 100);
             };
 
+            const manageBillingBtn = document.getElementById('manageBillingBtn');
+            if (manageBillingBtn) {
+              manageBillingBtn.onclick = async () => {
+                manageBillingBtn.innerText = 'Opening billing...';
+                try {
+                  const res = await fetch('/api/billing/portal', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ${token}' }
+                  });
+                  const data = await res.json();
+                  if (data.url) window.location.href = data.url;
+                  else {
+                    alert(data.error || 'Could not open subscription management.');
+                    manageBillingBtn.innerText = 'Manage subscription';
+                  }
+                } catch (e) {
+                  alert('Error opening subscription management: ' + e.message);
+                  manageBillingBtn.innerText = 'Manage subscription';
+                }
+              };
+            }
+
             document.getElementById('deleteBtn').onclick = async () => {
-              if (!confirm("Permanently delete account and all saved summaries?")) return;
+              if (!confirm("Permanently delete your account and all saved summaries? This cannot be undone.")) return;
               try {
                 const res = await fetch('/api/account/delete', {
                   method: 'DELETE',
@@ -1128,7 +1151,39 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
+    if (url.pathname === "/api/billing/portal" && req.method === "POST") {
+      if (!user.stripe_customer_id) {
+        return new Response(JSON.stringify({ error: 'No Stripe subscription was found for this account.' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      if (!env.STRIPE_SECRET_KEY) {
+        return new Response(JSON.stringify({ error: 'Billing portal is not configured yet.' }), { status: 503, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+
+      const params = new URLSearchParams({
+        customer: user.stripe_customer_id,
+        return_url: `${origin}/dashboard?token=${encodeURIComponent(authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader)}`
+      });
+      const stripeRes = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: params.toString()
+      });
+      const session = await stripeRes.json();
+      if (!stripeRes.ok || !session.url) {
+        return new Response(JSON.stringify({ error: session.error?.message || 'Could not open Stripe billing portal.' }), { status: 502, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      return new Response(JSON.stringify({ url: session.url }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
     if (url.pathname === "/api/account/delete" && req.method === "DELETE") {
+      if (user.subscription_status === 'active') {
+        return new Response(JSON.stringify({
+          error: 'Cancel your Pro subscription first in Manage subscription. Your access remains until the end of the current billing period, after which you can delete your account.'
+        }), { status: 409, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
       const { results } = await env.DB.prepare("SELECT snapshot_key FROM summaries WHERE user_id = ?").bind(user.id).all();
       for (const row of results) {
         if (row.snapshot_key) await env.SNAPSHOTS.delete(row.snapshot_key);
