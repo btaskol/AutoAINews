@@ -10,19 +10,19 @@
     }
   ],
   "vars": {
-    "READ_ONLY": "true"
+    "READ_ONLY": "false"
   },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "news-db",
-      "database_id": "81b3d774-ad73-49a3-8614-e2f763081b25"
+      "database_name": "brief-dev-tag-filters-db",
+      "database_id": "a29eba23-2e52-423d-9e90-34ca80afebcb"
     }
   ],
   "r2_buckets": [
     {
       "binding": "SNAPSHOTS",
-      "bucket_name": "news-snapshots"
+      "bucket_name": "brief-dev-tag-filters-snapshots"
     }
   ]
 }
