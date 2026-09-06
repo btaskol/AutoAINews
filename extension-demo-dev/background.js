@@ -131,7 +131,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const response = await fetch(`${API_BASE}/api/${endpoint}`, {
           method: "POST",
           headers,
-          body: JSON.stringify(request.data || { pageText: request.pageText })
+          body: JSON.stringify(request.data || {
+            pageText: request.pageText,
+            summaryLanguage: request.summaryLanguage
+          })
         });
 
         if (response.status === 401) {
@@ -177,7 +180,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => injectModal(tab, true, 
 function injectModal(tab, isSelection, selectedText = "") {
   if (!tab?.id || tab.url?.startsWith("chrome://") || tab.url?.startsWith("edge://") || tab.url?.startsWith("about:")) return;
 
-  chrome.storage.local.get(["user", "sessionToken"], async (res) => {
+  chrome.storage.local.get(["user", "sessionToken", "summaryLanguage"], async (res) => {
     const currentUser = (res.sessionToken && res.user) ? res.user : null;
 
     let textToUse = selectedText;
@@ -205,7 +208,8 @@ function injectModal(tab, isSelection, selectedText = "") {
         url: tab.url || "",
         wordCount: textToUse ? textToUse.trim().split(/\s+/).length : 0,
         pageText: textToUse,
-        isSelection: finalIsSelection
+        isSelection: finalIsSelection,
+        summaryLanguage: res.summaryLanguage || "auto"
       }]
     });
   });
@@ -217,6 +221,20 @@ function renderUI(context) {
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+  const summaryLanguages = [
+    ["auto", "Same as article"], ["en", "English"], ["tr", "Türkçe"],
+    ["de", "Deutsch"], ["es", "Español"], ["fr", "Français"],
+    ["it", "Italiano"], ["pt", "Português"], ["nl", "Nederlands"],
+    ["pl", "Polski"], ["ru", "Русский"], ["uk", "Українська"],
+    ["ar", "العربية"], ["ja", "日本語"], ["ko", "한국어"],
+    ["zh", "中文"], ["hi", "हिन्दी"]
+  ];
+  const selectedSummaryLanguage = summaryLanguages.some(([value]) => value === context.summaryLanguage)
+    ? context.summaryLanguage
+    : "auto";
+  const languageOptions = summaryLanguages.map(([value, label]) =>
+    `<option value="${value}"${value === selectedSummaryLanguage ? " selected" : ""}>${label}</option>`
+  ).join("");
   let card = document.getElementById("ai-floating-card");
   if (card) card.remove();
 
@@ -280,6 +298,8 @@ function renderUI(context) {
       </div>
     </div>
     <div id="ai-body">
+      <label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label>
+      <select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select>
       <button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Summarize</button>
     </div>
   `;
@@ -295,9 +315,11 @@ function renderUI(context) {
   };
 
   document.getElementById("ai-sum-btn").onclick = () => {
+    const summaryLanguage = document.getElementById("ai-language").value;
+    chrome.storage.local.set({ summaryLanguage });
     const body = document.getElementById("ai-body");
     body.innerHTML = `<div style="color:#6b7280;font-size:12px;padding:8px 0;">Generating summary...</div>`;
-    chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText }, (data) => {
+    chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, summaryLanguage }, (data) => {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
