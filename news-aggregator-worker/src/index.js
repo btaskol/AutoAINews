@@ -156,6 +156,18 @@ function formatMadridTime(value) {
   }).format(date));
 }
 
+function sessionTokenFromCookie(req) {
+  const cookieHeader = req.headers.get('Cookie') || '';
+  const value = cookieHeader.split(';').map(part => part.trim()).find(part => part.startsWith('brief_session='))?.slice('brief_session='.length);
+  try { return value ? decodeURIComponent(value) : ''; } catch { return ''; }
+}
+
+function briefSessionCookie(token, clear = false) {
+  return clear
+    ? 'brief_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'
+    : `brief_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`;
+}
+
 function isBriefAdmin(user) {
   return user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com';
 }
@@ -658,10 +670,10 @@ export default {
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
       if (url.searchParams.get("action") === "logout") {
-        return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
+        return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true, env.CHROME_WEB_STORE_URL), { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie('', true) } });
       }
 
-      let token = url.searchParams.get("token");
+      let token = url.searchParams.get("token") || sessionTokenFromCookie(req);
       let user = null;
 
       if (token) {
@@ -728,7 +740,7 @@ export default {
         </div>` : '';
 
       const cardsHtml = results.length > 0 ? results.map(s => `
-        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
+        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-created="${escapeHtml(s.created_at || '')}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
           <div class="card-header">
             <div class="card-context">
               <span class="card-source">${escapeHtml(sourceLabelForUrl(s.url))}</span>
@@ -1235,6 +1247,17 @@ export default {
               if (chip) chip.innerHTML = '★ Pinned <span>' + count + '</span>';
             }
 
+            function sortCardsByPinnedThenDate() {
+              const container = document.getElementById('cardsContainer');
+              if (!container) return;
+              [...container.querySelectorAll('.card')]
+                .sort((left, right) => {
+                  const pinnedDifference = Number(right.dataset.pinned === 'true') - Number(left.dataset.pinned === 'true');
+                  return pinnedDifference || String(right.dataset.created || '').localeCompare(String(left.dataset.created || ''));
+                })
+                .forEach(card => container.appendChild(card));
+            }
+
             async function toggleSummaryPin(id, pinned) {
               const button = document.querySelector('.btn-pin[data-summary-id="' + id + '"]');
               if (button) button.disabled = true;
@@ -1253,6 +1276,7 @@ export default {
                   button.setAttribute('onclick', "toggleSummaryPin('" + id + "', " + (!pinned) + ")");
                   if (card) card.dataset.pinned = String(pinned);
                   updatePinnedFilterChip();
+                  sortCardsByPinnedThenDate();
                   applyFilters();
                 }
                 else alert(data.error || 'Could not update saved brief pin.');
@@ -1266,7 +1290,7 @@ export default {
         </html>
       `;
 
-      return new Response(html, { headers: htmlHeaders });
+      return new Response(html, { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie(token) } });
     }
 
     const authHeader = req.headers.get("Authorization");
