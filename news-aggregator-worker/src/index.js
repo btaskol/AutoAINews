@@ -1205,7 +1205,10 @@ export default {
                   body: JSON.stringify({ id, pinned })
                 });
                 const data = await res.json();
-                if (data.success) window.location.reload();
+                // A plain reload drops the session token from the URL, briefly
+                // rendering the sign-in page before local storage restores it.
+                // Keep the authenticated dashboard URL while refreshing the tag rail.
+                if (data.success) window.location.replace('/dashboard?token=${encodeURIComponent(token)}');
                 else alert(data.error || 'Could not update tag preference.');
               } catch (e) {
                 alert('Error updating tag preference: ' + e.message);
@@ -1220,7 +1223,8 @@ export default {
                   body: JSON.stringify({ id, pinned })
                 });
                 const data = await res.json();
-                if (data.success) window.location.reload();
+                // Preserve the session token here for the same reason as tag pins.
+                if (data.success) window.location.replace('/dashboard?token=${encodeURIComponent(token)}');
                 else alert(data.error || 'Could not update saved brief pin.');
               } catch (e) {
                 alert('Error updating saved brief pin: ' + e.message);
