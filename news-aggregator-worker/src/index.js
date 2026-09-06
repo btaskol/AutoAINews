@@ -602,6 +602,20 @@ export default {
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY is_pinned DESC, created_at DESC"
       ).bind(user.id).all();
       const pinnedCount = results.filter(summary => summary.is_pinned).length;
+      const chromeWebStoreUrl = String(env.CHROME_WEB_STORE_URL || '').trim();
+      const showExtensionOnboarding = results.length === 0 || (isBriefAdmin(user) && url.searchParams.get('preview') === 'extension-onboarding');
+      const extensionOnboardingHtml = showExtensionOnboarding ? `
+        <section class="extension-onboarding" id="extensionOnboarding" aria-label="Get started with Brief for Chrome">
+          <button type="button" class="onboarding-dismiss" id="dismissExtensionOnboarding" aria-label="Dismiss extension setup">×</button>
+          <div class="onboarding-icon">B</div>
+          <div class="onboarding-content">
+            <p class="onboarding-eyebrow">Get the most from Brief</p>
+            <h2>Save pages from anywhere in Chrome</h2>
+            <p>Install Brief, then pin it to your toolbar so it is ready whenever you find something worth keeping.</p>
+            <ol><li>Install Brief from the Chrome Web Store.</li><li>Click the Extensions icon, then pin Brief.</li></ol>
+            ${chromeWebStoreUrl ? `<a class="onboarding-install" href="${escapeHtml(chromeWebStoreUrl)}" target="_blank" rel="noopener noreferrer">Install Brief for Chrome ↗</a>` : '<p class="onboarding-pending">The Chrome Web Store install link will be available at launch.</p>'}
+          </div>
+        </section>` : '';
 
       const { results: tags } = await env.DB.prepare(`
         SELECT tags.id, tags.name, tags.is_pinned, COUNT(summary_tags.summary_id) AS capture_count
@@ -699,6 +713,18 @@ export default {
             .status-badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 12px; }
             .btn-upgrade { background: #059669; color: #ffffff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
             .btn-upgrade:hover { background: #047857; }
+            .extension-onboarding { background: linear-gradient(135deg, #eff6ff, #f8fafc); border: 1px solid #bfdbfe; border-radius: 10px; display: flex; gap: 14px; margin: 0 0 24px; padding: 18px 46px 18px 18px; position: relative; }
+            [data-theme="dark"] .extension-onboarding { background: linear-gradient(135deg, #172554, #1e293b); border-color: #1d4ed8; }
+            .onboarding-icon { align-items: center; background: #111827; border-radius: 8px; color: #fff; display: flex; flex: 0 0 auto; font-size: 16px; font-weight: 700; height: 34px; justify-content: center; width: 34px; }
+            .onboarding-content h2 { font-size: 16px; margin: 0 0 4px; }
+            .onboarding-content p { color: var(--text-muted); font-size: 13px; margin: 0 0 10px; }
+            .onboarding-eyebrow { color: #2563eb !important; font-size: 11px !important; font-weight: 700; letter-spacing: .04em; margin-bottom: 4px !important; text-transform: uppercase; }
+            .onboarding-content ol { color: var(--text); font-size: 13px; margin: 0 0 14px; padding-left: 18px; }
+            .onboarding-install { background: #111827; border-radius: 6px; color: #fff; display: inline-block; font-size: 13px; font-weight: 600; padding: 9px 12px; text-decoration: none; }
+            .onboarding-install:hover { background: #374151; }
+            .onboarding-pending { font-size: 12px !important; font-style: italic; margin: 0 !important; }
+            .onboarding-dismiss { background: none; border: 0; color: var(--text-muted); cursor: pointer; font-size: 22px; line-height: 1; padding: 8px; position: absolute; right: 8px; top: 8px; }
+            .onboarding-dismiss:hover { color: var(--text); }
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
@@ -807,6 +833,7 @@ export default {
           <div class="search-container">
             <input type="text" id="searchInput" class="search-input" placeholder="Search briefs, tags, or notes...">
           </div>
+          ${extensionOnboardingHtml}
           ${tagFiltersHtml}
 
           <main id="cardsContainer">${cardsHtml}</main>
@@ -817,6 +844,13 @@ export default {
             if (upgradeBtn) {
               upgradeBtn.onclick = () => { window.location.href = '/pricing?token=${encodeURIComponent(token)}'; };
             }
+
+            const onboarding = document.getElementById('extensionOnboarding');
+            if (localStorage.getItem('brief-extension-onboarding-dismissed-v1') === 'true' && onboarding) onboarding.remove();
+            document.getElementById('dismissExtensionOnboarding')?.addEventListener('click', () => {
+              localStorage.setItem('brief-extension-onboarding-dismissed-v1', 'true');
+              onboarding?.remove();
+            });
 
             const themeBtn = document.getElementById('themeToggleBtn');
             const isDark = localStorage.getItem('theme') === 'dark';
