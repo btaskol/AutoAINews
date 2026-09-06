@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Brief Dev",
+  "version": "1.0.1",
+  "description": "Development-only build of Brief for testing unreleased Worker changes.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://dev.brieflykeep.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Summarize Page (Dev)",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://dev.brieflykeep.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
