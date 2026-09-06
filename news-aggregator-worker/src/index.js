@@ -722,7 +722,7 @@ export default {
           <div class="tag-chips" id="tagChips">
             <button type="button" class="tag-chip active" data-tag="">All <span>${results.length}</span></button>
             ${pinnedCount ? `<button type="button" class="tag-chip" data-tag="__pinned__">★ Pinned <span>${pinnedCount}</span></button>` : ''}
-            ${tags.map(tag => `<span class="tag-item"><button type="button" class="tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)} <span>${tag.capture_count}</span></button><button type="button" class="tag-pin ${tag.is_pinned ? 'pinned' : ''}" onclick="toggleTagPin('${tag.id}', ${tag.is_pinned ? 'false' : 'true'})" aria-label="${tag.is_pinned ? 'Unpin' : 'Pin'} ${escapeHtml(tag.name)}">★</button></span>`).join('')}
+            ${tags.map(tag => `<span class="tag-item"><button type="button" class="tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)} <span>${tag.capture_count}</span></button><button type="button" class="tag-pin ${tag.is_pinned ? 'pinned' : ''}" data-tag-id="${tag.id}" onclick="toggleTagPin('${tag.id}', ${tag.is_pinned ? 'false' : 'true'})" aria-label="${tag.is_pinned ? 'Unpin' : 'Pin'} ${escapeHtml(tag.name)}">★</button></span>`).join('')}
           </div>
           <button type="button" class="tag-scroll-arrow" id="tagScrollRight" aria-label="Scroll tags right">›</button>
         </div>` : '';
@@ -737,7 +737,7 @@ export default {
             <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml((tagsBySummary.get(s.id) || []).map(tag => tag.name).join(', '))}" style="display:none;" placeholder="Tags (comma-separated)">
             <div class="card-meta">
               <span>${escapeHtml(s.created_at) || "Recent"}</span>
-              <button onclick="toggleSummaryPin('${s.id}', ${s.is_pinned ? 'false' : 'true'})" class="btn-pin ${s.is_pinned ? 'pinned' : ''}" aria-label="${s.is_pinned ? 'Unpin' : 'Pin'} saved brief">★</button>
+              <button onclick="toggleSummaryPin('${s.id}', ${s.is_pinned ? 'false' : 'true'})" data-summary-id="${s.id}" class="btn-pin ${s.is_pinned ? 'pinned' : ''}" aria-label="${s.is_pinned ? 'Unpin' : 'Pin'} saved brief">★</button>
               <button id="btn-edit-${s.id}" onclick="enableCardEdit('${s.id}')" class="btn-text">Edit</button>
               <button onclick="deleteSummary('${s.id}')" class="btn-text-danger">Delete</button>
             </div>
@@ -1198,6 +1198,8 @@ export default {
             }
 
             async function toggleTagPin(id, pinned) {
+              const button = document.querySelector('.tag-pin[data-tag-id="' + id + '"]');
+              if (button) button.disabled = true;
               try {
                 const res = await fetch('/api/tag/pin', {
                   method: 'POST',
@@ -1205,17 +1207,37 @@ export default {
                   body: JSON.stringify({ id, pinned })
                 });
                 const data = await res.json();
-                // A plain reload drops the session token from the URL, briefly
-                // rendering the sign-in page before local storage restores it.
-                // Keep the authenticated dashboard URL while refreshing the tag rail.
-                if (data.success) window.location.replace('/dashboard?token=${encodeURIComponent(token)}');
+                if (data.success && button) {
+                  button.disabled = false;
+                  button.classList.toggle('pinned', pinned);
+                  button.setAttribute('aria-label', (pinned ? 'Unpin' : 'Pin') + ' tag');
+                  button.setAttribute('onclick', "toggleTagPin('" + id + "', " + (!pinned) + ")");
+                }
                 else alert(data.error || 'Could not update tag preference.');
               } catch (e) {
+                if (button) button.disabled = false;
                 alert('Error updating tag preference: ' + e.message);
               }
             }
 
+            function updatePinnedFilterChip() {
+              const count = document.querySelectorAll('.card[data-pinned="true"]').length;
+              let chip = tagChips?.querySelector('[data-tag="__pinned__"]');
+              if (count === 0) { chip?.remove(); return; }
+              if (!chip && tagChips) {
+                chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'tag-chip';
+                chip.dataset.tag = '__pinned__';
+                const allChip = tagChips.querySelector('[data-tag=""]');
+                allChip?.insertAdjacentElement('afterend', chip);
+              }
+              if (chip) chip.innerHTML = '★ Pinned <span>' + count + '</span>';
+            }
+
             async function toggleSummaryPin(id, pinned) {
+              const button = document.querySelector('.btn-pin[data-summary-id="' + id + '"]');
+              if (button) button.disabled = true;
               try {
                 const res = await fetch('/api/summary/pin', {
                   method: 'POST',
@@ -1223,10 +1245,19 @@ export default {
                   body: JSON.stringify({ id, pinned })
                 });
                 const data = await res.json();
-                // Preserve the session token here for the same reason as tag pins.
-                if (data.success) window.location.replace('/dashboard?token=${encodeURIComponent(token)}');
+                if (data.success && button) {
+                  const card = document.getElementById('card-' + id);
+                  button.disabled = false;
+                  button.classList.toggle('pinned', pinned);
+                  button.setAttribute('aria-label', (pinned ? 'Unpin' : 'Pin') + ' saved brief');
+                  button.setAttribute('onclick', "toggleSummaryPin('" + id + "', " + (!pinned) + ")");
+                  if (card) card.dataset.pinned = String(pinned);
+                  updatePinnedFilterChip();
+                  applyFilters();
+                }
                 else alert(data.error || 'Could not update saved brief pin.');
               } catch (e) {
+                if (button) button.disabled = false;
                 alert('Error updating saved brief pin: ' + e.message);
               }
             }
