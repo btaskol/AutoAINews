@@ -91,6 +91,14 @@ function escapeHtml(str) {
   })[m]);
 }
 
+function sourceLabelForUrl(value) {
+  try {
+    return new URL(value).hostname.replace(/^www\./i, '') || 'Web capture';
+  } catch {
+    return 'Web capture';
+  }
+}
+
 async function verifyGoogleToken(googleIdToken) {
   if (!googleIdToken) return null;
   const cleanToken = googleIdToken.startsWith("Bearer ") ? googleIdToken.split(" ")[1] : googleIdToken;
@@ -525,7 +533,10 @@ export default {
       const cardsHtml = results.length > 0 ? results.map(s => `
         <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
           <div class="card-header">
-            <span id="tag-display-${s.id}" class="card-tag">${(tagsBySummary.get(s.id) || []).map(tag => `<button type="button" class="card-tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`).join('') || "Web Capture"}</span>
+            <div class="card-context">
+              <span class="card-source">${escapeHtml(sourceLabelForUrl(s.url))}</span>
+              <span id="tag-display-${s.id}" class="card-tag">${(tagsBySummary.get(s.id) || []).map(tag => `<button type="button" class="card-tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`).join('')}</span>
+            </div>
             <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml((tagsBySummary.get(s.id) || []).map(tag => tag.name).join(', '))}" style="display:none;" placeholder="Tags (comma-separated)">
             <div class="card-meta">
               <span>${escapeHtml(s.created_at) || "Recent"}</span>
@@ -620,6 +631,8 @@ export default {
             .dropdown-item.danger { color: #dc2626; border-top: 1px solid var(--border); }
             .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
             .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+            .card-context { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+            .card-source { color: var(--text-muted); font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             .card-tag { display: flex; flex-wrap: wrap; gap: 6px; }
             .card-tag-chip { background: #eff6ff; border: 0; border-radius: 12px; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; padding: 3px 7px; }
             [data-theme="dark"] .card-tag-chip { background: #0c4a6e; }
