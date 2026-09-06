@@ -42,6 +42,12 @@ function formatGroundedSummary(data) {
   return { summary: sections.join('\n\n'), title: title || null };
 }
 
+function parseSummaryModelOutput(content) {
+  const raw = String(content || '').trim();
+  const json = raw.match(/\{[\s\S]*\}/)?.[0] || raw;
+  return JSON.parse(json);
+}
+
 const SUMMARY_LANGUAGE_LABELS = {
   auto: "the source's primary language",
   en: "English", tr: "Turkish", de: "German", es: "Spanish", fr: "French",
@@ -1147,7 +1153,6 @@ export default {
                 model: model,
                 temperature: 0.1,
                 max_completion_tokens: 650,
-                response_format: { type: "json_object" },
                 messages: [
                   {
                     role: "system",
@@ -1161,7 +1166,7 @@ export default {
             const groqData = await groqRes.json();
             if (groqData.choices?.[0]?.message?.content) {
               try {
-                const structuredSummary = formatGroundedSummary(JSON.parse(groqData.choices[0].message.content));
+                const structuredSummary = formatGroundedSummary(parseSummaryModelOutput(groqData.choices[0].message.content));
                 if (structuredSummary) {
                   summary = structuredSummary.summary;
                   generatedTitle = structuredSummary.title;
