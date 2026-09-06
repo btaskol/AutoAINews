@@ -800,13 +800,32 @@ export default {
             const tagChips = document.getElementById('tagChips');
             const activeTags = new Set();
 
+            // Search is accent-insensitive across Latin-script languages, so a
+            // plain keyboard can find "Yüksek", "niño", "résumé", or "São"
+            // from "yuksek", "nino", "resume", and "sao". The explicit
+            // dotless-i mapping covers the Turkish keyboard substitution too.
+            function normalizeSearchText(value) {
+              return String(value || '')
+                .toLocaleLowerCase('tr-TR')
+                .normalize('NFD')
+                .replace(/[\\u0300-\\u036f]/g, '')
+                .replace(/ı/g, 'i')
+                .replace(/ß/g, 'ss')
+                .replace(/æ/g, 'ae')
+                .replace(/œ/g, 'oe')
+                .replace(/ø/g, 'o')
+                .replace(/ł/g, 'l')
+                .replace(/[đð]/g, 'd')
+                .replace(/þ/g, 'th');
+            }
+
             function applyFilters() {
-              const query = (searchInput?.value || '').toLocaleLowerCase().trim();
+              const query = normalizeSearchText(searchInput?.value).trim();
               const cards = document.querySelectorAll('.card');
               let visibleCount = 0;
 
               cards.forEach(card => {
-                const matchesSearch = card.innerText.toLocaleLowerCase().includes(query);
+                const matchesSearch = normalizeSearchText(card.innerText).includes(query);
                 const cardTags = (card.dataset.tags || '').split(',');
                 const matchesTag = [...activeTags].every(tag => tag === '__pinned__' ? card.dataset.pinned === 'true' : cardTags.includes(tag));
                 const isVisible = matchesSearch && matchesTag;
