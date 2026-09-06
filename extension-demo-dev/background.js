@@ -212,6 +212,11 @@ function injectModal(tab, isSelection, selectedText = "") {
 }
 
 function renderUI(context) {
+  // chrome.scripting serializes this function into the page, so helpers used
+  // below must live inside it rather than relying on the service-worker scope.
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
   let card = document.getElementById("ai-floating-card");
   if (card) card.remove();
 
