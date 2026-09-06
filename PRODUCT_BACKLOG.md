@@ -41,6 +41,21 @@ For every idea: make the smallest testable version in development, test it with 
 | Advanced analytics | Valuable at scale, but custom dashboards too early can become maintenance work. | Start with a few product events in an analytics service. |
 | General task manager | Risks making Brief unclear and competing with mature task apps. | Only expand from capture-linked follow-ups after proven use. |
 
+## Business ownership and account migration — before hiring, external funding, or meaningful recurring revenue
+
+Brief can launch from the current accounts. Do not rush a live migration while product assumptions are still changing. Before the business depends on Brief, move control to company-owned accounts with a written inventory and rollback plan.
+
+| Item | Why it matters | Safe first step |
+| --- | --- | --- |
+| Company-controlled mailbox | A personal inbox should not be the permanent owner of customer, billing, recovery, or store access. | Create a mailbox on the Brief domain (preferred) or a dedicated Google account; enable two-factor authentication, recovery methods, and a password manager. |
+| Account inventory and recovery register | Ownership is easy to lose when services, domains, and API keys are spread across accounts. | Maintain a private list of the domain registrar, Cloudflare, Google Cloud/OAuth, Chrome Web Store, Stripe, source repository, support inbox, analytics, and all recovery contacts. Record the owner, two-factor method, and renewal/billing owner for each. |
+| Cloudflare company account migration | The Worker, D1, R2, DNS, secrets, and billing should ultimately be controlled by Brief rather than one person’s private account. | Create the organization account, grant your current account temporary admin access, then plan a staged copy/export-and-redeploy migration. Test the new Worker and data copy before changing DNS or cancelling anything. |
+| Google identity and Chrome publisher ownership | Google OAuth configuration and the Chrome Web Store listing are core customer-facing assets. | Create the Google Cloud project and OAuth client under the Brief-controlled account; transfer or re-publish the Chrome Web Store item only with a tested redirect-URI and user re-authentication plan. |
+| Billing and legal ownership | Stripe, invoices, tax settings, and payout details must match the eventual legal business owner. | When the legal entity and bank account are ready, create or migrate to the appropriate Stripe business account and repeat the full live billing/webhook test. |
+| Access policy for future teammates | Contractors and employees should not inherit owner-level credentials. | Use Brief’s in-app reviewer/admin roles for product operations; grant Cloudflare, Stripe, and Google access only by role, with least privilege and two-factor authentication. |
+
+**Migration guardrail:** never delete the current personal account, OAuth client, Worker, database, or billing configuration until the replacement is tested, customer sessions are understood, and a rollback path is documented.
+
 ## Parked ideas
 
 Keep these visible, but do not schedule them yet:
