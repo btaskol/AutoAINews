@@ -133,6 +133,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           headers,
           body: JSON.stringify(request.data || {
             pageText: request.pageText,
+            pageTitle: request.pageTitle,
             summaryLanguage: request.summaryLanguage
           })
         });
@@ -356,7 +357,7 @@ function renderUI(context) {
     chrome.storage.local.set({ summaryLanguage });
     const body = document.getElementById("ai-body");
     body.innerHTML = `<div style="color:#6b7280;font-size:12px;padding:8px 0;">Generating summary...</div>`;
-    chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, summaryLanguage }, (data) => {
+    chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, pageTitle: context.title, summaryLanguage }, (data) => {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
@@ -371,7 +372,7 @@ function renderUI(context) {
           statusDiv.innerText = "Saving...";
 
           const payload = {
-            title: context.title,
+            title: data.title || context.title,
             customTitle: document.getElementById("ai-tag").value.trim(),
             comment: document.getElementById("ai-comment").value.trim(),
             url: context.url,
