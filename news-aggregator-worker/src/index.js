@@ -692,6 +692,7 @@ export default {
       ` : '';
       const adminFeedbackBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="feedbackBtn">Feedback</button>' : '';
       const adminTeamBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="teamBtn">Team access</button>' : '';
+      const adminOnboardingPreviewBtnHtml = isBriefAdmin(user) && env.SEED_TAG_DEMO === 'true' ? '<button class="dropdown-item" id="onboardingPreviewBtn">Preview extension setup</button>' : '';
 
       const html = `
         <!DOCTYPE html>
@@ -822,6 +823,7 @@ export default {
                 <div class="dropdown-menu" id="profMenu">
                   ${adminFeedbackBtnHtml}
                   ${adminTeamBtnHtml}
+                  ${adminOnboardingPreviewBtnHtml}
                   <button class="dropdown-item" id="logoutBtn">Sign Out</button>
                   ${['active', 'canceling'].includes(user.subscription_status) && user.stripe_customer_id ? '<button class="dropdown-item" id="manageBillingBtn">Manage subscription</button>' : ''}
                   <button class="dropdown-item danger" id="deleteBtn">Delete Account</button>
@@ -1035,6 +1037,8 @@ export default {
             if (feedbackBtn) feedbackBtn.onclick = () => { window.location.href = '/admin/feedback?token=${encodeURIComponent(token)}'; };
             const teamBtn = document.getElementById('teamBtn');
             if (teamBtn) teamBtn.onclick = () => { window.location.href = '/admin/team?token=${encodeURIComponent(token)}'; };
+            const onboardingPreviewBtn = document.getElementById('onboardingPreviewBtn');
+            if (onboardingPreviewBtn) onboardingPreviewBtn.onclick = () => { window.location.href = '/dashboard?preview=extension-onboarding&token=${encodeURIComponent(token)}'; };
 
             const manageBillingBtn = document.getElementById('manageBillingBtn');
             if (manageBillingBtn) {
