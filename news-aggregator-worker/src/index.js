@@ -52,6 +52,29 @@ function summaryLanguageLabel(value) {
   return SUMMARY_LANGUAGE_LABELS[String(value || "auto").toLowerCase()] || SUMMARY_LANGUAGE_LABELS.auto;
 }
 
+function canReaskAfterThirtyDays(timestamp) {
+  if (!timestamp) return true;
+  const parsed = Date.parse(`${timestamp}Z`);
+  return !Number.isFinite(parsed) || (Date.now() - parsed) >= 30 * 24 * 60 * 60 * 1000;
+}
+
+async function nextProductPrompt(env, user) {
+  const [feedback, summaryStats] = await Promise.all([
+    env.DB.prepare('SELECT * FROM user_product_feedback WHERE user_id = ?').bind(user.id).first(),
+    env.DB.prepare('SELECT COUNT(*) AS capture_count, MIN(created_at) AS first_capture_at FROM summaries WHERE user_id = ?').bind(user.id).first()
+  ]);
+  const captureCount = Number(summaryStats?.capture_count || 0);
+  if (captureCount >= 1 && !feedback?.intended_use && canReaskAfterThirtyDays(feedback?.intended_use_skipped_at)) {
+    return { type: 'use_case' };
+  }
+  const firstCaptureAt = Date.parse(`${summaryStats?.first_capture_at || ''}Z`);
+  const hasUsedBriefForAWeek = Number.isFinite(firstCaptureAt) && (Date.now() - firstCaptureAt) >= 7 * 24 * 60 * 60 * 1000;
+  if (captureCount >= 5 && hasUsedBriefForAWeek && !feedback?.rating && canReaskAfterThirtyDays(feedback?.feedback_skipped_at)) {
+    return { type: 'feedback' };
+  }
+  return null;
+}
+
 function containsActionableHarmfulInstructions(text) {
   // Reporting on a cyberattack, violence, or sexual content is allowed. This
   // only catches material that appears to provide executable instructions for
@@ -1164,6 +1187,38 @@ export default {
       }
     }
 
+    if (url.pathname === "/api/product-feedback" && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const type = String(body?.type || '');
+      const skipped = body?.skip === true;
+      if (!['use_case', 'feedback'].includes(type)) {
+        return new Response(JSON.stringify({ error: 'Unsupported feedback type.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      await env.DB.prepare('INSERT OR IGNORE INTO user_product_feedback (user_id) VALUES (?)').bind(user.id).run();
+      if (type === 'use_case') {
+        const allowedUses = new Set(['research_study', 'news_current_events', 'work_reading', 'learning', 'personal_interest', 'other']);
+        if (skipped) {
+          await env.DB.prepare('UPDATE user_product_feedback SET intended_use_skipped_at = CURRENT_TIMESTAMP WHERE user_id = ?').bind(user.id).run();
+        } else if (allowedUses.has(String(body?.intendedUse || ''))) {
+          await env.DB.prepare('UPDATE user_product_feedback SET intended_use = ?, intended_use_skipped_at = NULL WHERE user_id = ?')
+            .bind(String(body.intendedUse), user.id).run();
+        } else {
+          return new Response(JSON.stringify({ error: 'Choose one of the available options.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
+      } else if (skipped) {
+        await env.DB.prepare('UPDATE user_product_feedback SET feedback_skipped_at = CURRENT_TIMESTAMP WHERE user_id = ?').bind(user.id).run();
+      } else {
+        const rating = Number(body?.rating);
+        const comment = String(body?.comment || '').trim().slice(0, 1200);
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+          return new Response(JSON.stringify({ error: 'Choose a rating from 1 to 5.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
+        await env.DB.prepare('UPDATE user_product_feedback SET rating = ?, rating_comment = ?, feedback_skipped_at = NULL WHERE user_id = ?')
+          .bind(rating, comment || null, user.id).run();
+      }
+      return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
     if (url.pathname === "/api/save-dashboard" && req.method === "POST") {
       if (!trialInfo.allowed) {
         return new Response(JSON.stringify({
@@ -1193,7 +1248,7 @@ export default {
         }
       }
 
-      return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+      return new Response(JSON.stringify({ success: true, prompt: await nextProductPrompt(env, user) }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
     if (url.pathname === "/api/billing/portal" && req.method === "POST") {

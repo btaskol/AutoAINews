@@ -153,6 +153,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === "SUBMIT_PRODUCT_FEEDBACK") {
+    chrome.storage.local.get(["sessionToken"], async (res) => {
+      if (!res.sessionToken) return sendResponse({ error: "Please sign in first." });
+      try {
+        const response = await fetch(`${API_BASE}/api/product-feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${res.sessionToken}` },
+          body: JSON.stringify(request.data || {})
+        });
+        sendResponse(await response.json());
+      } catch (err) {
+        sendResponse({ error: "Server unreachable." });
+      }
+    });
+    return true;
+  }
+
   if (request.action === "LOGOUT_USER") {
     chrome.storage.local.clear(() => {
       clearCardFromAllTabs();
@@ -235,6 +252,26 @@ function renderUI(context) {
   const languageOptions = summaryLanguages.map(([value, label]) =>
     `<option value="${value}"${value === selectedSummaryLanguage ? " selected" : ""}>${label}</option>`
   ).join("");
+  const showProductPrompt = (prompt) => {
+    const body = document.getElementById("ai-body");
+    if (!body || !prompt?.type) return;
+    const submit = (data) => chrome.runtime.sendMessage({ action: "SUBMIT_PRODUCT_FEEDBACK", data }, (response) => {
+      if (response?.success) body.innerHTML = `<div style="color:#059669;font-size:12px;padding:8px 0;text-align:center;">Thank you — this helps make Brief better.</div>`;
+      else body.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:8px 0;">${escapeHtml(response?.error || "Could not save your response.")}</div>`;
+    });
+    if (prompt.type === "use_case") {
+      const options = [["research_study", "Research and study"], ["news_current_events", "Keep up with news"], ["work_reading", "Save useful work reading"], ["learning", "Learn new topics"], ["personal_interest", "Organize personal interests"], ["other", "Something else"]];
+      body.innerHTML = `<div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:6px;">What are you hoping to do with Brief?</div><div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Optional — choose one so we can improve the right things.</div><div id="ai-use-options" style="display:grid;gap:6px;">${options.map(([value, label]) => `<button data-use="${value}" style="text-align:left;padding:8px 10px;background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#374151;cursor:pointer;font-size:12px;">${label}</button>`).join("")}</div><button id="ai-prompt-skip" style="width:100%;margin-top:10px;background:none;border:0;color:#6b7280;cursor:pointer;font-size:12px;">Skip for now</button>`;
+      document.querySelectorAll("#ai-use-options button").forEach(button => button.onclick = () => submit({ type: "use_case", intendedUse: button.dataset.use }));
+      document.getElementById("ai-prompt-skip").onclick = () => submit({ type: "use_case", skip: true });
+      return;
+    }
+    body.innerHTML = `<div style="font-size:14px;font-weight:600;color:#111827;margin-bottom:6px;">How is Brief working for you?</div><div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Optional — your feedback helps us improve.</div><div id="ai-rating" style="display:flex;gap:6px;margin-bottom:10px;">${[1, 2, 3, 4, 5].map(rating => `<button data-rating="${rating}" aria-label="${rating} star${rating === 1 ? '' : 's'}" style="background:none;border:0;color:#f59e0b;cursor:pointer;font-size:22px;padding:0;">★</button>`).join("")}</div><div id="ai-feedback-extra" style="display:none;"><textarea id="ai-feedback-comment" rows="2" placeholder="What could we improve? (optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;margin-bottom:8px;"></textarea><button id="ai-feedback-send" style="width:100%;padding:8px;background:#111827;color:white;border:0;border-radius:6px;cursor:pointer;font-size:12px;">Send feedback</button></div><button id="ai-prompt-skip" style="width:100%;margin-top:10px;background:none;border:0;color:#6b7280;cursor:pointer;font-size:12px;">Skip for now</button>`;
+    let selectedRating = null;
+    document.querySelectorAll("#ai-rating button").forEach(button => button.onclick = () => { selectedRating = Number(button.dataset.rating); document.getElementById("ai-feedback-extra").style.display = "block"; });
+    document.getElementById("ai-feedback-send").onclick = () => submit({ type: "feedback", rating: selectedRating, comment: document.getElementById("ai-feedback-comment").value.trim() });
+    document.getElementById("ai-prompt-skip").onclick = () => submit({ type: "feedback", skip: true });
+  };
   let card = document.getElementById("ai-floating-card");
   if (card) card.remove();
 
@@ -345,6 +382,7 @@ function renderUI(context) {
             if (res?.success) {
               statusDiv.style.color = "#059669";
               statusDiv.innerText = "Saved to Dashboard";
+              if (res.prompt) setTimeout(() => showProductPrompt(res.prompt), 700);
             } else {
               statusDiv.style.color = "#dc2626";
               statusDiv.innerText = res?.error || "Save failed.";
