@@ -250,8 +250,8 @@ function renderUI(context) {
       status.innerText = "Connecting to Google...";
       chrome.runtime.sendMessage({ action: "LOGIN_GOOGLE" }, (res) => {
         if (res?.success) {
-          status.innerText = "Signed in successfully.";
-          setTimeout(() => card.remove(), 800);
+          // Keep the card in place and immediately reveal the signed-in tools.
+          renderUI({ ...context, user: res.user });
         } else {
           status.innerText = res?.error || "Sign in failed.";
         }
