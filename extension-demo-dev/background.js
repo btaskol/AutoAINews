@@ -190,6 +190,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.action === "OPEN_REPORT") {
+    chrome.storage.local.get(["sessionToken"], (res) => {
+      if (res.sessionToken) chrome.tabs.create({ url: `${API_BASE}/report?token=${res.sessionToken}` });
+    });
+    return true;
+  }
 });
 
 chrome.action.onClicked.addListener((tab) => injectModal(tab, false));
@@ -324,6 +331,7 @@ function renderUI(context) {
       </div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="ai-dash-btn" style="background:none;border:none;color:#374151;cursor:pointer;font-size:12px;font-weight:500;padding:0;">Dashboard</button>
+        <button id="ai-report-btn" style="background:none;border:none;color:#374151;cursor:pointer;font-size:12px;font-weight:500;padding:0;">Report</button>
         <button id="ai-logout-btn" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;font-weight:500;padding:0;">Sign Out</button>
         <button id="ai-close" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;padding:0;">✕</button>
       </div>
@@ -346,6 +354,10 @@ function renderUI(context) {
 
   document.getElementById("ai-dash-btn").onclick = () => {
     chrome.runtime.sendMessage({ action: "OPEN_DASHBOARD" });
+  };
+
+  document.getElementById("ai-report-btn").onclick = () => {
+    chrome.runtime.sendMessage({ action: "OPEN_REPORT" });
   };
 
   document.getElementById("ai-logout-btn").onclick = () => {

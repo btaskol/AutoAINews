@@ -151,6 +151,18 @@ function canManageFeedback(user) {
   return isBriefAdmin(user) || user?.role === 'feedback_reviewer';
 }
 
+async function touchUserActivity(env, user) {
+  if (!user?.id) return;
+  // A coarse timestamp answers the useful product question (recent activity)
+  // without pretending that a browser tab means a person is "online".
+  try {
+    await env.DB.prepare("UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = ? AND (last_active_at IS NULL OR last_active_at < datetime('now', '-15 minutes'))")
+      .bind(user.id).run();
+  } catch (error) {
+    // Activity measurement must never block a normal capture or sign-in.
+  }
+}
+
 function sourceLabelForUrl(value) {
   try {
     return new URL(value).hostname.replace(/^www\./i, '') || 'Web capture';
@@ -404,6 +416,22 @@ function renderAdminTeamPage(token, members) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team access — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.card,.member,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.grant{display:grid;gap:10px;grid-template-columns:1fr 180px auto;margin:22px 0}.grant input,.grant select,.grant button,.member select{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:9px}.grant button{background:#111827;color:#fff;cursor:pointer}.member{align-items:center;display:flex;justify-content:space-between;margin:10px 0}.member strong,.member small{display:block}.member label{color:#6b7280;display:grid;font-size:12px;gap:5px}.notice{color:#b91c1c;font-size:13px;margin-top:8px}@media(max-width:600px){.grant{grid-template-columns:1fr}.member{align-items:flex-start;gap:12px;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Team access</h1><p class="muted">Grant access inside Brief without giving anyone Cloudflare, Stripe, deployment, or secret-key permissions. People must sign in to Brief once before you can add them.</p><section class="card"><strong>Grant access</strong><form class="grant" id="grant-form"><input id="invite-email" type="email" placeholder="teammate@example.com" required><select id="invite-role"><option value="feedback_reviewer">Feedback reviewer</option><option value="admin">Admin</option></select><button type="submit">Grant access</button></form><div id="notice" class="notice" role="status"></div></section><section><h2>People with access</h2>${rows}</section></main><script>const token=${JSON.stringify(token)};const notice=document.getElementById('notice');async function setRole(email,role){const res=await fetch('/api/admin/team',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({email,role})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not update access.');}document.getElementById('grant-form').addEventListener('submit',async event=>{event.preventDefault();notice.textContent='';try{await setRole(document.getElementById('invite-email').value,document.getElementById('invite-role').value);window.location.reload();}catch(error){notice.textContent=error.message;}});document.querySelectorAll('.member-role').forEach(select=>select.addEventListener('change',async()=>{notice.textContent='';try{await setRole(select.dataset.email,select.value);window.location.reload();}catch(error){notice.textContent=error.message;}}));</script></body></html>`;
 }
 
+function renderReportPage(token) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report an issue — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:640px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted{color:#6b7280;font-size:14px;line-height:1.55}.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-top:22px;padding:18px}label{display:grid;font-size:13px;font-weight:600;gap:6px;margin:14px 0}input,select,textarea,button{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:10px}textarea{min-height:130px;resize:vertical}button{background:#111827;color:#fff;cursor:pointer;font-weight:600}.notice{font-size:13px;margin:12px 0;min-height:18px}.success{color:#047857}.error{color:#b91c1c}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Report an issue or share an idea</h1><p class="muted">Send a short report to the Brief team. Your saved articles and summary content are not included automatically.</p><form class="card" id="report-form"><label>Type<select id="category"><option value="bug">Bug</option><option value="idea">Idea</option><option value="question">Question</option></select></label><label>What happened or what would help?<textarea id="message" maxlength="1000" required placeholder="Up to 1,000 characters"></textarea></label><label>Page URL (optional)<input id="page-url" type="url" maxlength="2000" placeholder="https://..."></label><div id="notice" class="notice" role="status"></div><button type="submit">Send report</button></form></main><script>const token=${JSON.stringify(token)};const form=document.getElementById('report-form');const notice=document.getElementById('notice');form.addEventListener('submit',async event=>{event.preventDefault();notice.className='notice';notice.textContent='Sending…';try{const res=await fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({category:document.getElementById('category').value,message:document.getElementById('message').value,pageUrl:document.getElementById('page-url').value,source:'dashboard'})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not send the report.');form.reset();notice.className='notice success';notice.textContent='Thank you — your report was sent.';}catch(error){notice.className='notice error';notice.textContent=error.message;}});</script></body></html>`;
+}
+
+function renderAdminUsersPage(token, metrics, users) {
+  const formatDate = value => value ? escapeHtml(String(value).replace('T', ' ').replace(/\.\d+Z?$/, '')) : 'Never';
+  const rows = users.length ? users.map(row => { const plan = row.subscription_status === 'active' ? 'Pro' : row.subscription_status === 'canceling' ? 'Canceling' : 'Free'; return `<tr><td><strong>${escapeHtml(row.name || row.email)}</strong><small>${escapeHtml(row.email)}</small></td><td>${plan}</td><td>${row.capture_count || 0}</td><td>${formatDate(row.last_active_at)}</td><td>${formatDate(row.created_at)}</td></tr>`; }).join('') : '<tr><td colspan="5">No users yet.</td></tr>';
+  const metric = (label, value) => `<div class="metric"><span>${label}</span><strong>${Number(value || 0)}</strong></div>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Users & activity — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:1050px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.metrics{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:22px 0}.metric{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.metric span{color:#6b7280;font-size:12px}.metric strong{display:block;font-size:24px;margin-top:5px}.table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e7eb;font-size:13px;padding:12px;text-align:left;white-space:nowrap}th{color:#6b7280;font-size:12px}td small{display:block;margin-top:3px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}body{padding:20px 12px}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Users & activity</h1><p class="muted">Activity is based on a user’s most recent meaningful Brief request, updated at most once every 15 minutes. It is not live online/offline tracking.</p><section class="metrics">${metric('All users',metrics.total_users)}${metric('New in 7 days',metrics.new_users_7d)}${metric('Active in 1 day',metrics.active_1d)}${metric('Active in 7 days',metrics.active_7d)}${metric('Active in 30 days',metrics.active_30d)}${metric('Pro members',metrics.paid_users)}${metric('Canceling',metrics.canceling_users)}</section><div class="table-wrap"><table><thead><tr><th>User</th><th>Plan</th><th>Captures</th><th>Last active</th><th>Joined</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
+}
+
+function renderAdminReportsPage(token, reports) {
+  const rows = reports.length ? reports.map(report => `<article class="report"><div class="head"><div><strong>${escapeHtml(report.email)}</strong><small>${escapeHtml(report.category)} · ${escapeHtml(report.source)} · ${escapeHtml(report.created_at)}</small></div><label>Status<select class="status" data-id="${report.id}">${['new','reviewing','planned','resolved'].map(status => `<option value="${status}"${status === report.status ? ' selected' : ''}>${status}</option>`).join('')}</select></label></div><p>${escapeHtml(report.message)}</p>${report.page_url ? `<a href="${escapeHtml(report.page_url)}" target="_blank" rel="noopener noreferrer">Open reported page ↗</a>` : ''}</article>`).join('') : '<div class="empty">No reports yet.</div>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reports — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:850px}.top,.head{align-items:center;display:flex;gap:12px;justify-content:space-between}.top{margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back,a{color:#2563eb;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.report,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin:12px 0;padding:16px}.report p{line-height:1.55;white-space:pre-wrap}.head strong,.head small{display:block}.head label{color:#6b7280;display:grid;font-size:12px;gap:5px}.status{background:#fff;border:1px solid #d1d5db;border-radius:6px;font:inherit;padding:7px}@media(max-width:600px){.head{align-items:flex-start;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Reports</h1><p class="muted">Private reports from Brief users. Saved article content is never included automatically.</p><section>${rows}</section></main><script>const token=${JSON.stringify(token)};document.querySelectorAll('.status').forEach(select=>select.addEventListener('change',async()=>{const res=await fetch('/api/admin/reports/status',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({id:select.dataset.id,status:select.value})});if(!res.ok)alert('Could not update report status.');}));</script></body></html>`;
+}
+
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -473,20 +501,21 @@ export default {
 
         try {
           await env.DB.prepare(`
-            INSERT INTO users (id, email, name, picture, session_token, session_expires_at) 
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, email, name, picture, session_token, session_expires_at, last_active_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET 
               email = excluded.email, 
               name = excluded.name, 
               picture = excluded.picture,
               session_token = excluded.session_token,
-              session_expires_at = excluded.session_expires_at
+              session_expires_at = excluded.session_expires_at,
+              last_active_at = CURRENT_TIMESTAMP
           `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, appSessionToken, sessionExpiresAt).run();
         } catch (dbErr) {
           await env.DB.prepare(`
-            INSERT INTO users (id, email, name, picture) 
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, picture = excluded.picture
+            INSERT INTO users (id, email, name, picture, last_active_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, picture = excluded.picture, last_active_at = CURRENT_TIMESTAMP
           `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
         }
 
@@ -557,10 +586,40 @@ export default {
       }
     }
 
+    if (url.pathname === "/report" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to send a report.', false, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
+      await touchUserActivity(env, user);
+      return new Response(renderReportPage(token), { headers: htmlHeaders });
+    }
+
+    if (url.pathname === "/admin/users" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
+      await touchUserActivity(env, user);
+      const [metrics, userList] = await Promise.all([
+        env.DB.prepare(`SELECT COUNT(*) AS total_users, SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_users_7d, SUM(CASE WHEN last_active_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END) AS active_1d, SUM(CASE WHEN last_active_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS active_7d, SUM(CASE WHEN last_active_at >= datetime('now', '-30 days') THEN 1 ELSE 0 END) AS active_30d, SUM(CASE WHEN subscription_status = 'active' THEN 1 ELSE 0 END) AS paid_users, SUM(CASE WHEN subscription_status = 'canceling' THEN 1 ELSE 0 END) AS canceling_users FROM users`).first(),
+        env.DB.prepare(`SELECT u.email, u.name, u.created_at, u.last_active_at, u.subscription_status, COUNT(s.id) AS capture_count FROM users u LEFT JOIN summaries s ON s.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_active_at, u.created_at) DESC LIMIT 200`).all()
+      ]);
+      return new Response(renderAdminUsersPage(token, metrics, userList.results || []), { headers: htmlHeaders });
+    }
+
+    if (url.pathname === "/admin/reports" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!canManageFeedback(user)) return new Response('Not found', { status: 404 });
+      await touchUserActivity(env, user);
+      const { results: reports } = await env.DB.prepare(`SELECT r.id, r.category, r.message, r.page_url, r.source, r.status, r.created_at, u.email FROM user_reports r JOIN users u ON u.id = r.user_id ORDER BY r.created_at DESC LIMIT 200`).all();
+      return new Response(renderAdminReportsPage(token, reports || []), { headers: htmlHeaders });
+    }
+
     if (url.pathname === "/admin/feedback" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
       if (!canManageFeedback(user)) return new Response('Not found', { status: 404 });
+      await touchUserActivity(env, user);
       const selectedRating = ['1', '2', '3', '4', '5'].includes(url.searchParams.get('rating')) ? url.searchParams.get('rating') : '';
       const selectedUseCase = String(url.searchParams.get('use_case') || '');
       const allowedUses = ['research_study', 'news_current_events', 'work_reading', 'learning', 'personal_interest', 'other'];
@@ -580,6 +639,7 @@ export default {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
+      await touchUserActivity(env, user);
       const { results: members } = await env.DB.prepare(`SELECT email, name, CASE WHEN lower(email) = 'berkaytaskol@gmail.com' THEN 'admin' ELSE role END AS role FROM users WHERE role IN ('admin', 'feedback_reviewer') OR lower(email) = 'berkaytaskol@gmail.com' ORDER BY CASE WHEN lower(email) = 'berkaytaskol@gmail.com' OR role = 'admin' THEN 0 ELSE 1 END, email COLLATE NOCASE`).all();
       return new Response(renderAdminTeamPage(token, members), { headers: htmlHeaders });
     }
@@ -599,6 +659,8 @@ export default {
       if (!user) {
         return new Response(renderMinimalAuthPage(origin, "", false, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
       }
+
+      await touchUserActivity(env, user);
 
       const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
       const trialInfo = calculateTrial(user, trialRecord);
@@ -697,7 +759,10 @@ export default {
       const upgradeBtnHtml = (trialInfo.status !== 'active' && trialInfo.status !== 'admin') ? `
         <button id="upgradeBtn" class="btn-upgrade">Upgrade</button>
       ` : '';
+      const reportBtnHtml = '<button class="dropdown-item" id="reportBtn">Report an issue or idea</button>';
       const adminFeedbackBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="feedbackBtn">Feedback</button>' : '';
+      const adminReportsBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="reportsBtn">Reports</button>' : '';
+      const adminUsersBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="usersBtn">Users & activity</button>' : '';
       const adminTeamBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="teamBtn">Team access</button>' : '';
       const adminOnboardingPreviewBtnHtml = isBriefAdmin(user) && env.SEED_TAG_DEMO === 'true' ? '<button class="dropdown-item" id="onboardingPreviewBtn">Preview extension setup</button>' : '';
 
@@ -829,7 +894,10 @@ export default {
               <div class="profile-dropdown">
                 <button class="btn-secondary" id="profBtn">${escapeHtml(user.email)}</button>
                 <div class="dropdown-menu" id="profMenu">
+                  ${reportBtnHtml}
                   ${adminFeedbackBtnHtml}
+                  ${adminReportsBtnHtml}
+                  ${adminUsersBtnHtml}
                   ${adminTeamBtnHtml}
                   ${adminOnboardingPreviewBtnHtml}
                   <button class="dropdown-item" id="logoutBtn">Sign Out</button>
@@ -1043,6 +1111,12 @@ export default {
 
             const feedbackBtn = document.getElementById('feedbackBtn');
             if (feedbackBtn) feedbackBtn.onclick = () => { window.location.href = '/admin/feedback?token=${encodeURIComponent(token)}'; };
+            const reportBtn = document.getElementById('reportBtn');
+            if (reportBtn) reportBtn.onclick = () => { window.location.href = '/report?token=${encodeURIComponent(token)}'; };
+            const reportsBtn = document.getElementById('reportsBtn');
+            if (reportsBtn) reportsBtn.onclick = () => { window.location.href = '/admin/reports?token=${encodeURIComponent(token)}'; };
+            const usersBtn = document.getElementById('usersBtn');
+            if (usersBtn) usersBtn.onclick = () => { window.location.href = '/admin/users?token=${encodeURIComponent(token)}'; };
             const teamBtn = document.getElementById('teamBtn');
             if (teamBtn) teamBtn.onclick = () => { window.location.href = '/admin/team?token=${encodeURIComponent(token)}'; };
             const onboardingPreviewBtn = document.getElementById('onboardingPreviewBtn');
@@ -1154,6 +1228,8 @@ export default {
     if (!user && url.pathname.startsWith("/api/")) {
       return new Response(JSON.stringify({ error: "Unauthorized. Session expired." }), { status: 401, headers: corsHeaders });
     }
+
+    await touchUserActivity(env, user);
 
     const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
     const trialInfo = calculateTrial(user, trialRecord);
@@ -1345,6 +1421,29 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
+    if (url.pathname === "/api/report" && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const category = String(body?.category || '');
+      const message = String(body?.message || '').trim();
+      const source = String(body?.source || 'dashboard');
+      let pageUrl = String(body?.pageUrl || '').trim();
+      if (!['bug', 'idea', 'question'].includes(category) || !message || message.length > 1000 || !['dashboard', 'extension'].includes(source)) {
+        return new Response(JSON.stringify({ error: 'Enter a report of up to 1,000 characters.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      if (pageUrl) {
+        try {
+          const parsed = new URL(pageUrl);
+          if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Unsupported URL');
+          pageUrl = parsed.href;
+        } catch (error) {
+          return new Response(JSON.stringify({ error: 'Enter a valid http(s) page URL or leave it blank.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
+      }
+      await env.DB.prepare('INSERT INTO user_reports (user_id, category, message, page_url, source) VALUES (?, ?, ?, ?, ?)')
+        .bind(user.id, category, message, pageUrl || null, source).run();
+      return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
     if (url.pathname === "/api/admin/feedback/status" && req.method === "POST") {
       if (!canManageFeedback(user)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
       const body = await req.json().catch(() => ({}));
@@ -1353,6 +1452,19 @@ export default {
       const status = String(body?.status || '');
       if (!targetUserId || !statuses.has(status)) return new Response(JSON.stringify({ error: 'Invalid feedback status.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
       await env.DB.prepare(`INSERT INTO feedback_review_status (user_id, status, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP`).bind(targetUserId, status).run();
+      return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
+    if (url.pathname === "/api/admin/reports/status" && req.method === "POST") {
+      if (!canManageFeedback(user)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      const body = await req.json().catch(() => ({}));
+      const id = Number(body?.id);
+      const status = String(body?.status || '');
+      if (!Number.isInteger(id) || id < 1 || !['new', 'reviewing', 'planned', 'resolved'].includes(status)) {
+        return new Response(JSON.stringify({ error: 'Invalid report status.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      const result = await env.DB.prepare('UPDATE user_reports SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(status, id).run();
+      if (result.meta?.changes !== 1) return new Response(JSON.stringify({ error: 'Report not found.' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
