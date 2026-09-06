@@ -136,6 +136,10 @@ function isBriefAdmin(user) {
   return user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com';
 }
 
+function canManageFeedback(user) {
+  return isBriefAdmin(user) || user?.role === 'feedback_reviewer';
+}
+
 function sourceLabelForUrl(value) {
   try {
     return new URL(value).hostname.replace(/^www\./i, '') || 'Web capture';
@@ -373,7 +377,13 @@ function renderAdminFeedbackPage(token, metrics, responses, selectedRating, sele
   const rows = responses.length ? responses.map(response => `
     <article class="response"><div class="response-top"><div><strong>${escapeHtml(response.email)}</strong><small>${escapeHtml(response.created_at || 'Recent')}</small></div><select class="review-status" data-user-id="${escapeHtml(response.user_id)}">${statuses.map(status => `<option value="${status}"${status === (response.review_status || 'new') ? ' selected' : ''}>${status[0].toUpperCase() + status.slice(1)}</option>`).join('')}</select></div>
     <div class="pills">${response.intended_use ? `<span>Use case: ${escapeHtml(response.intended_use.replace(/_/g, ' '))}</span>` : ''}${response.rating ? `<span>Rating: ${'★'.repeat(response.rating)}${'☆'.repeat(5 - response.rating)}</span>` : '<span>No rating yet</span>'}</div>${response.rating_comment ? `<p class="comment">${escapeHtml(response.rating_comment)}</p>` : '<p class="empty-comment">No written comment.</p>'}</article>`).join('') : '<div class="empty">No feedback matches these filters yet.</div>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Feedback — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:860px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small,.empty-comment{color:#6b7280;font-size:13px}.metrics{display:grid;gap:12px;grid-template-columns:repeat(3,1fr);margin:22px 0}.metric,.response,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.metric strong{display:block;font-size:24px;margin-top:5px}.filters{align-items:end;display:flex;gap:10px;margin:22px 0}.filters label{color:#4b5563;display:grid;font-size:12px;gap:5px}.filters select,.filters button,.review-status{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:8px}.filters button{background:#111827;color:#fff;cursor:pointer}.response{margin:12px 0}.response-top{align-items:center;display:flex;justify-content:space-between;gap:12px}.response-top strong{display:block}.pills{display:flex;gap:8px;margin:12px 0}.pills span{background:#eff6ff;border-radius:999px;color:#1d4ed8;font-size:12px;padding:4px 8px}.comment{line-height:1.55;white-space:pre-wrap}@media(max-width:600px){.metrics{grid-template-columns:1fr}.filters{align-items:stretch;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Feedback</h1><p class="muted">Private customer feedback — visible only to Brief administrators.</p><section class="metrics"><div class="metric"><span class="muted">Responses</span><strong>${metrics?.response_count || 0}</strong></div><div class="metric"><span class="muted">Average rating</span><strong>${average}</strong></div><div class="metric"><span class="muted">Written comments</span><strong>${metrics?.comment_count || 0}</strong></div></section><form class="filters" method="get"><input type="hidden" name="token" value="${escapeHtml(token)}"><label>Rating<select name="rating"><option value="">All ratings</option>${[1,2,3,4,5].map(rating => `<option value="${rating}"${String(rating) === selectedRating ? ' selected' : ''}>${rating} star${rating === 1 ? '' : 's'}</option>`).join('')}</select></label><label>Use case<select name="use_case"><option value="">All use cases</option>${useCases.map(useCase => `<option value="${escapeHtml(useCase)}"${useCase === selectedUseCase ? ' selected' : ''}>${escapeHtml(useCase.replace(/_/g, ' '))}</option>`).join('')}</select></label><button type="submit">Apply filters</button></form><section>${rows}</section></main><script>document.querySelectorAll('.review-status').forEach(select=>select.addEventListener('change',async()=>{const res=await fetch('/api/admin/feedback/status',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer ${token}'},body:JSON.stringify({userId:select.dataset.userId,status:select.value})});if(!res.ok)alert('Could not update feedback status.');}));</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Feedback — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:860px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small,.empty-comment{color:#6b7280;font-size:13px}.metrics{display:grid;gap:12px;grid-template-columns:repeat(3,1fr);margin:22px 0}.metric,.response,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.metric strong{display:block;font-size:24px;margin-top:5px}.filters{align-items:end;display:flex;gap:10px;margin:22px 0}.filters label{color:#4b5563;display:grid;font-size:12px;gap:5px}.filters select,.filters button,.review-status{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:8px}.filters button{background:#111827;color:#fff;cursor:pointer}.response{margin:12px 0}.response-top{align-items:center;display:flex;justify-content:space-between;gap:12px}.response-top strong{display:block}.pills{display:flex;gap:8px;margin:12px 0}.pills span{background:#eff6ff;border-radius:999px;color:#1d4ed8;font-size:12px;padding:4px 8px}.comment{line-height:1.55;white-space:pre-wrap}@media(max-width:600px){.metrics{grid-template-columns:1fr}.filters{align-items:stretch;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Feedback</h1><p class="muted">Private customer feedback — visible only to authorized Brief team members.</p><section class="metrics"><div class="metric"><span class="muted">Responses</span><strong>${metrics?.response_count || 0}</strong></div><div class="metric"><span class="muted">Average rating</span><strong>${average}</strong></div><div class="metric"><span class="muted">Written comments</span><strong>${metrics?.comment_count || 0}</strong></div></section><form class="filters" method="get"><input type="hidden" name="token" value="${escapeHtml(token)}"><label>Rating<select name="rating"><option value="">All ratings</option>${[1,2,3,4,5].map(rating => `<option value="${rating}"${String(rating) === selectedRating ? ' selected' : ''}>${rating} star${rating === 1 ? '' : 's'}</option>`).join('')}</select></label><label>Use case<select name="use_case"><option value="">All use cases</option>${useCases.map(useCase => `<option value="${escapeHtml(useCase)}"${useCase === selectedUseCase ? ' selected' : ''}>${escapeHtml(useCase.replace(/_/g, ' '))}</option>`).join('')}</select></label><button type="submit">Apply filters</button></form><section>${rows}</section></main><script>document.querySelectorAll('.review-status').forEach(select=>select.addEventListener('change',async()=>{const res=await fetch('/api/admin/feedback/status',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer ${token}'},body:JSON.stringify({userId:select.dataset.userId,status:select.value})});if(!res.ok)alert('Could not update feedback status.');}));</script></body></html>`;
+}
+
+function renderAdminTeamPage(token, members) {
+  const rows = members.length ? members.map(member => `
+    <article class="member"><div><strong>${escapeHtml(member.name || member.email)}</strong><small>${escapeHtml(member.email)}</small></div><label>Role<select class="member-role" data-email="${escapeHtml(member.email)}"><option value="admin"${member.role === 'admin' ? ' selected' : ''}>Admin</option><option value="feedback_reviewer"${member.role === 'feedback_reviewer' ? ' selected' : ''}>Feedback reviewer</option><option value="user"${member.role === 'user' ? ' selected' : ''}>Remove access</option></select></label></article>`).join('') : '<div class="empty">No additional team members yet.</div>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team access — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.card,.member,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.grant{display:grid;gap:10px;grid-template-columns:1fr 180px auto;margin:22px 0}.grant input,.grant select,.grant button,.member select{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:9px}.grant button{background:#111827;color:#fff;cursor:pointer}.member{align-items:center;display:flex;justify-content:space-between;margin:10px 0}.member strong,.member small{display:block}.member label{color:#6b7280;display:grid;font-size:12px;gap:5px}.notice{color:#b91c1c;font-size:13px;margin-top:8px}@media(max-width:600px){.grant{grid-template-columns:1fr}.member{align-items:flex-start;gap:12px;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Team access</h1><p class="muted">Grant access inside Brief without giving anyone Cloudflare, Stripe, deployment, or secret-key permissions. People must sign in to Brief once before you can add them.</p><section class="card"><strong>Grant access</strong><form class="grant" id="grant-form"><input id="invite-email" type="email" placeholder="teammate@example.com" required><select id="invite-role"><option value="feedback_reviewer">Feedback reviewer</option><option value="admin">Admin</option></select><button type="submit">Grant access</button></form><div id="notice" class="notice" role="status"></div></section><section><h2>People with access</h2>${rows}</section></main><script>const token=${JSON.stringify(token)};const notice=document.getElementById('notice');async function setRole(email,role){const res=await fetch('/api/admin/team',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({email,role})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not update access.');}document.getElementById('grant-form').addEventListener('submit',async event=>{event.preventDefault();notice.textContent='';try{await setRole(document.getElementById('invite-email').value,document.getElementById('invite-role').value);window.location.reload();}catch(error){notice.textContent=error.message;}});document.querySelectorAll('.member-role').forEach(select=>select.addEventListener('change',async()=>{notice.textContent='';try{await setRole(select.dataset.email,select.value);window.location.reload();}catch(error){notice.textContent=error.message;}}));</script></body></html>`;
 }
 
 export default {
@@ -532,7 +542,7 @@ export default {
     if (url.pathname === "/admin/feedback" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
-      if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
+      if (!canManageFeedback(user)) return new Response('Not found', { status: 404 });
       const selectedRating = ['1', '2', '3', '4', '5'].includes(url.searchParams.get('rating')) ? url.searchParams.get('rating') : '';
       const selectedUseCase = String(url.searchParams.get('use_case') || '');
       const allowedUses = ['research_study', 'news_current_events', 'work_reading', 'learning', 'personal_interest', 'other'];
@@ -546,6 +556,14 @@ export default {
         env.DB.prepare(`SELECT COUNT(*) AS response_count, COUNT(rating) AS rating_count, ROUND(AVG(rating), 1) AS average_rating, SUM(CASE WHEN rating_comment IS NOT NULL AND rating_comment != '' THEN 1 ELSE 0 END) AS comment_count FROM user_product_feedback`).first()
       ]);
       return new Response(renderAdminFeedbackPage(token, metrics, responses, selectedRating, selectedUseCase, allowedUses), { headers: htmlHeaders });
+    }
+
+    if (url.pathname === "/admin/team" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
+      const { results: members } = await env.DB.prepare(`SELECT email, name, CASE WHEN lower(email) = 'berkaytaskol@gmail.com' THEN 'admin' ELSE role END AS role FROM users WHERE role IN ('admin', 'feedback_reviewer') OR lower(email) = 'berkaytaskol@gmail.com' ORDER BY CASE WHEN lower(email) = 'berkaytaskol@gmail.com' OR role = 'admin' THEN 0 ELSE 1 END, email COLLATE NOCASE`).all();
+      return new Response(renderAdminTeamPage(token, members), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
@@ -647,7 +665,8 @@ export default {
       const upgradeBtnHtml = (trialInfo.status !== 'active' && trialInfo.status !== 'admin') ? `
         <button id="upgradeBtn" class="btn-upgrade">Upgrade</button>
       ` : '';
-      const adminFeedbackBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="feedbackBtn">Feedback</button>' : '';
+      const adminFeedbackBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="feedbackBtn">Feedback</button>' : '';
+      const adminTeamBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="teamBtn">Team access</button>' : '';
 
       const html = `
         <!DOCTYPE html>
@@ -765,6 +784,7 @@ export default {
                 <button class="btn-secondary" id="profBtn">${escapeHtml(user.email)}</button>
                 <div class="dropdown-menu" id="profMenu">
                   ${adminFeedbackBtnHtml}
+                  ${adminTeamBtnHtml}
                   <button class="dropdown-item" id="logoutBtn">Sign Out</button>
                   ${['active', 'canceling'].includes(user.subscription_status) && user.stripe_customer_id ? '<button class="dropdown-item" id="manageBillingBtn">Manage subscription</button>' : ''}
                   <button class="dropdown-item danger" id="deleteBtn">Delete Account</button>
@@ -968,6 +988,8 @@ export default {
 
             const feedbackBtn = document.getElementById('feedbackBtn');
             if (feedbackBtn) feedbackBtn.onclick = () => { window.location.href = '/admin/feedback?token=${encodeURIComponent(token)}'; };
+            const teamBtn = document.getElementById('teamBtn');
+            if (teamBtn) teamBtn.onclick = () => { window.location.href = '/admin/team?token=${encodeURIComponent(token)}'; };
 
             const manageBillingBtn = document.getElementById('manageBillingBtn');
             if (manageBillingBtn) {
@@ -1267,13 +1289,31 @@ export default {
     }
 
     if (url.pathname === "/api/admin/feedback/status" && req.method === "POST") {
-      if (!isBriefAdmin(user)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      if (!canManageFeedback(user)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
       const body = await req.json().catch(() => ({}));
       const statuses = new Set(['new', 'reviewing', 'planned', 'done']);
       const targetUserId = String(body?.userId || '');
       const status = String(body?.status || '');
       if (!targetUserId || !statuses.has(status)) return new Response(JSON.stringify({ error: 'Invalid feedback status.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
       await env.DB.prepare(`INSERT INTO feedback_review_status (user_id, status, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP`).bind(targetUserId, status).run();
+      return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
+    if (url.pathname === "/api/admin/team" && req.method === "POST") {
+      if (!isBriefAdmin(user)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      const body = await req.json().catch(() => ({}));
+      const email = String(body?.email || '').trim().toLowerCase();
+      const role = String(body?.role || '');
+      if (!/^\S+@\S+\.\S+$/.test(email) || !['admin', 'feedback_reviewer', 'user'].includes(role)) {
+        return new Response(JSON.stringify({ error: 'Enter a valid email and role.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      if (email === 'berkaytaskol@gmail.com' && role !== 'admin') {
+        return new Response(JSON.stringify({ error: 'The account owner cannot be removed from admin access here.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      const result = await env.DB.prepare('UPDATE users SET role = ? WHERE lower(email) = ?').bind(role, email).run();
+      if (result.meta?.changes !== 1) {
+        return new Response(JSON.stringify({ error: 'That person has not signed in to Brief yet. Ask them to sign in once with this email, then try again.' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
