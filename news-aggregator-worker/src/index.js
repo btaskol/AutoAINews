@@ -793,6 +793,7 @@ export default {
             }
 
             const activeToken = "${token}";
+            const isOnboardingPreview = ${isBriefAdmin(user) && url.searchParams.get('preview') === 'extension-onboarding' ? 'true' : 'false'};
             localStorage.setItem('sessionToken', activeToken);
 
             if (window.location.search.includes('token=')) {
@@ -848,7 +849,7 @@ export default {
             }
 
             const onboarding = document.getElementById('extensionOnboarding');
-            if (localStorage.getItem('brief-extension-onboarding-dismissed-v1') === 'true' && onboarding) onboarding.remove();
+            if (!isOnboardingPreview && localStorage.getItem('brief-extension-onboarding-dismissed-v1') === 'true' && onboarding) onboarding.remove();
             document.getElementById('dismissExtensionOnboarding')?.addEventListener('click', () => {
               localStorage.setItem('brief-extension-onboarding-dismissed-v1', 'true');
               onboarding?.remove();
