@@ -79,6 +79,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "LOGIN_GOOGLE") {
+    // Chrome can dismiss an injected panel while an interactive OAuth window is
+    // open. Keep the originating tab so the signed-in panel can be restored.
+    const sourceTabId = sender.tab?.id;
     const redirectUrl = chrome.identity.getRedirectURL();
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
@@ -105,6 +108,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (data.success) {
           chrome.storage.local.set({ sessionToken: data.sessionToken, user: data.user }, () => {
             syncDashboardLoginTabs(data.sessionToken);
+            if (sourceTabId) {
+              chrome.tabs.get(sourceTabId, (sourceTab) => {
+                if (!chrome.runtime.lastError && sourceTab?.id) injectModal(sourceTab, false);
+              });
+            }
             sendResponse({ success: true, user: data.user });
           });
         } else {
