@@ -348,7 +348,8 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         * { box-sizing: border-box; }
         body { background-color: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; display: flex; justify-content: center; min-height: 100vh; padding: 48px 24px; }
         .login-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 42px 32px 30px; width: 100%; max-width: 680px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: center; }
-        .logo-mark { width: 44px; height: 44px; background: #111827; color: #ffffff; border-radius: 10px; font-weight: 700; font-size: 22px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+        .brand-row { align-items: center; display: flex; gap: 10px; justify-content: center; margin-bottom: 16px; }
+        .logo-mark { width: 44px; height: 44px; background: #111827; color: #ffffff; border-radius: 10px; font-weight: 700; font-size: 22px; display: inline-flex; align-items: center; justify-content: center; }
         [data-theme="dark"] .logo-mark { background: #38bdf8; color: #0f172a; }
         h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 8px 0; }
         p { font-size: 15px; color: var(--text-muted); margin: 0 auto 24px; line-height: 1.5; max-width: 440px; }
@@ -362,17 +363,17 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         .value-list { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 13px; gap: 8px 18px; justify-content: center; list-style: none; margin: 0 0 28px; padding: 0; }
         .value-list li::before { content: '✓'; color: #059669; font-weight: 700; margin-right: 6px; }
         .fine-print { color: var(--text-muted); font-size: 12px; margin: 18px 0 0; }
-        .beta-pill { background: #eff6ff; border-radius: 999px; color: #1d4ed8; display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .03em; margin: 0 0 12px; padding: 4px 9px; text-transform: uppercase; }
+        .beta-pill { background: #eff6ff; border-radius: 999px; color: #1d4ed8; display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .03em; margin: 0; padding: 4px 9px; text-transform: uppercase; }
+        .beta-description { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; color: #1d4ed8; font-size: 13px; margin: 0 auto 24px; max-width: 520px; padding: 10px 14px; }
         @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } }
       </style>
     </head>
     <body>
       <div class="login-card">
-        <div class="logo-mark">B</div>
-        ${isBeta ? '<div class="beta-pill">Early access beta</div>' : ''}
+        <div class="brand-row"><div class="logo-mark">B</div>${isBeta ? '<div class="beta-pill">Early access beta</div>' : ''}</div>
         <h1>Brief</h1>
         <p>Capture what matters from the web, get a grounded summary, and build a searchable personal library.</p>
-        ${isBeta ? '<p class="fine-print" style="margin-top:-12px">Free while we learn. Access is invitation-only; limits and features may change before the paid launch.</p>' : ''}
+        ${isBeta ? '<p class="beta-description">Free while we learn. Access is invitation-only; limits and features may change before the paid launch.</p>' : ''}
         <ul class="value-list"><li>Save pages from Chrome</li><li>Organize with tags and pins</li><li>Search your personal library</li></ul>
         <div id="statusMsg" class="message" style="${message ? '' : 'display:none;'}">${escapeHtml(message)}</div>
         <a href="${googleAuthUrl.href}" id="loginBtn" class="btn-google">
@@ -380,7 +381,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           Sign in with Google
         </a>
         ${hasChromeWebStoreLink ? `<div class="extension-cta"><p>New to Brief? Install the Chrome extension first.</p><a class="btn-extension" href="${escapeHtml(installUrl)}" target="_blank" rel="noopener noreferrer">Add Brief to Chrome — Free ↗</a></div>` : ''}
-        <div class="fine-print">Free includes 10 summaries. Pro is €7/month or €59/year, including applicable taxes. Choose yearly and save €25. Sign in to see plans and upgrade securely through Stripe.</div>
+        <div class="fine-print">${isBeta ? 'Beta access is free. Your 25 summaries renew each month.' : 'Free includes 10 summaries. Pro is €7/month or €59/year, including applicable taxes. Choose yearly and save €25. Sign in to see plans and upgrade securely through Stripe.'}</div>
       </div>
 
       <script>
