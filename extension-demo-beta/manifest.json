@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Brief Beta",
   "version": "1.0.1",
-  "description": "Invitation-only beta build of Brief.",
+  "description": "Public beta of Brief: save web pages, get grounded summaries, and build a searchable library.",
   "permissions": [
     "activeTab",
     "scripting",
