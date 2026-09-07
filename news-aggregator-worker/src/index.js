@@ -324,9 +324,10 @@ async function seedTagDemo(env, user) {
   await env.DB.prepare("UPDATE summaries SET is_pinned = 1 WHERE user_id = ? AND title = '[Test] AI product briefing'").bind(user.id).run();
 }
 
-function renderMinimalAuthPage(origin, message = "", clearStorage = false, chromeWebStoreUrl = "") {
+function renderMinimalAuthPage(origin, message = "", clearStorage = false, chromeWebStoreUrl = "", env = {}) {
   const installUrl = String(chromeWebStoreUrl || '').trim();
   const hasChromeWebStoreLink = /^https:\/\/chromewebstore\.google\.com\/.+/.test(installUrl);
+  const isBeta = env.APP_STAGE === 'beta';
   const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   googleAuthUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
   googleAuthUrl.searchParams.set("response_type", "id_token");
@@ -361,14 +362,17 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         .value-list { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 13px; gap: 8px 18px; justify-content: center; list-style: none; margin: 0 0 28px; padding: 0; }
         .value-list li::before { content: '✓'; color: #059669; font-weight: 700; margin-right: 6px; }
         .fine-print { color: var(--text-muted); font-size: 12px; margin: 18px 0 0; }
+        .beta-pill { background: #eff6ff; border-radius: 999px; color: #1d4ed8; display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .03em; margin: 0 0 12px; padding: 4px 9px; text-transform: uppercase; }
         @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } }
       </style>
     </head>
     <body>
       <div class="login-card">
         <div class="logo-mark">B</div>
+        ${isBeta ? '<div class="beta-pill">Early access beta</div>' : ''}
         <h1>Brief</h1>
         <p>Capture what matters from the web, get a grounded summary, and build a searchable personal library.</p>
+        ${isBeta ? '<p class="fine-print" style="margin-top:-12px">Free while we learn. Access is invitation-only; limits and features may change before the paid launch.</p>' : ''}
         <ul class="value-list"><li>Save pages from Chrome</li><li>Organize with tags and pins</li><li>Search your personal library</li></ul>
         <div id="statusMsg" class="message" style="${message ? '' : 'display:none;'}">${escapeHtml(message)}</div>
         <a href="${googleAuthUrl.href}" id="loginBtn" class="btn-google">
@@ -438,7 +442,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
 
 function renderStripePricingPage(origin, user, token, env) {
   if (!env.STRIPE_PRICING_TABLE_ID || !env.STRIPE_PUBLISHABLE_KEY) {
-    return renderMinimalAuthPage(origin, 'Pricing is not configured yet. Please try again shortly.', false, env.CHROME_WEB_STORE_URL);
+    return renderMinimalAuthPage(origin, 'Pricing is not configured yet. Please try again shortly.', false, env.CHROME_WEB_STORE_URL, env);
   }
   return `<!DOCTYPE html>
     <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Plans — Brief</title>
@@ -502,13 +506,13 @@ export default {
     }
 
     if (url.pathname === "/" && req.method === "GET") {
-      return new Response(renderMinimalAuthPage(origin, '', false, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
+      return new Response(renderMinimalAuthPage(origin, '', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/pricing" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
-      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to view plans.', false, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
+      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to view plans.', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
       return new Response(renderStripePricingPage(origin, user, token, env), { headers: htmlHeaders });
     }
 
@@ -645,7 +649,7 @@ export default {
     if (url.pathname === "/report" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
-      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to send a report.', false, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
+      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to send a report.', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
       await touchUserActivity(env, user);
       return new Response(renderReportPage(token), { headers: htmlHeaders });
     }
@@ -710,7 +714,7 @@ export default {
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
       if (url.searchParams.get("action") === "logout") {
-        return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true, env.CHROME_WEB_STORE_URL), { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie('', true) } });
+        return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true, env.CHROME_WEB_STORE_URL, env), { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie('', true) } });
       }
 
       let token = url.searchParams.get("token") || sessionTokenFromCookie(req);
@@ -721,7 +725,7 @@ export default {
       }
 
       if (!user) {
-        return new Response(renderMinimalAuthPage(origin, "", false, env.CHROME_WEB_STORE_URL), { headers: htmlHeaders });
+        return new Response(renderMinimalAuthPage(origin, "", false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
       }
 
       await touchUserActivity(env, user);
@@ -898,6 +902,7 @@ export default {
             .dropdown-item { width: 100%; text-align: left; padding: 8px 12px; background: none; border: none; color: var(--text); font-size: 13px; cursor: pointer; }
             .dropdown-item:hover { background: var(--sub-bg); }
             .dropdown-item.danger { color: #dc2626; border-top: 1px solid var(--border); }
+            .beta-notice { background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; color:#1d4ed8; font-size:12px; line-height:1.5; margin:-8px 0 20px; padding:10px 12px; }
             .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
             .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
             .card-context { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
@@ -974,6 +979,7 @@ export default {
               </div>
             </div>
           </header>
+          ${env.APP_STAGE === 'beta' ? '<div class="beta-notice"><strong>Early access beta</strong> — free while we learn. Access is invitation-only; limits and features may change before the paid launch.</div>' : ''}
 
           <div class="search-container">
             <input type="text" id="searchInput" class="search-input" placeholder="Search briefs, tags, or notes...">

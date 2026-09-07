@@ -11,6 +11,7 @@
   ],
   "vars": {
     "ACCESS_MODE": "allowlist",
+    "APP_STAGE": "beta",
     "FREE_SUMMARY_LIMIT": "25",
     "FREE_SUMMARY_PERIOD": "monthly",
     "PAYMENTS_ENABLED": "false"
