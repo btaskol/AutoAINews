@@ -373,7 +373,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         <div class="brand-row"><div class="logo-mark">B</div>${isBeta ? '<div class="beta-pill">Early access beta</div>' : ''}</div>
         <h1>Brief</h1>
         <p>Capture what matters from the web, get a grounded summary, and build a searchable personal library.</p>
-        ${isBeta ? '<p class="beta-description">Free while we learn. Everyone is welcome; 25 summaries refresh each calendar month. Limits and features may change before the paid launch.</p>' : ''}
+        ${isBeta ? '<p class="beta-description">Free while we learn. 25 summaries refresh each calendar month. Limits and features may change before the paid launch.</p>' : ''}
         <ul class="value-list"><li>Save pages from Chrome</li><li>Organize with tags and pins</li><li>Search your personal library</li></ul>
         <div id="statusMsg" class="message" style="${message ? '' : 'display:none;'}">${escapeHtml(message)}</div>
         <a href="${googleAuthUrl.href}" id="loginBtn" class="btn-google">
@@ -980,7 +980,7 @@ export default {
               </div>
             </div>
           </header>
-          ${env.APP_STAGE === 'beta' ? '<div class="beta-notice"><strong>Early access beta</strong> — free while we learn. Everyone is welcome; 25 summaries refresh each calendar month. Limits and features may change before the paid launch.</div>' : ''}
+          ${env.APP_STAGE === 'beta' ? '<div class="beta-notice"><strong>Early access beta</strong> — free while we learn. 25 summaries refresh each calendar month. Limits and features may change before the paid launch.</div>' : ''}
 
           <div class="search-container">
             <input type="text" id="searchInput" class="search-input" placeholder="Search briefs, tags, or notes...">
