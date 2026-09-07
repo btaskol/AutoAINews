@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Brief Beta",
+  "version": "1.0.1",
+  "description": "Invitation-only beta build of Brief.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://beta.brieflykeep.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Summarize Page (Beta)",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://beta.brieflykeep.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

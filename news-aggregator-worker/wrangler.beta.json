@@ -1,0 +1,31 @@
+{
+  "name": "brief-beta",
+  "main": "src/index.js",
+  "compatibility_date": "2024-01-01",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "beta.brieflykeep.com",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "ACCESS_MODE": "allowlist",
+    "FREE_SUMMARY_LIMIT": "25",
+    "FREE_SUMMARY_PERIOD": "monthly",
+    "PAYMENTS_ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "brief-beta-db",
+      "database_id": "b35f34e4-17d1-4900-8279-78fe79a73349"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SNAPSHOTS",
+      "bucket_name": "brief-beta-snapshots"
+    }
+  ]
+}

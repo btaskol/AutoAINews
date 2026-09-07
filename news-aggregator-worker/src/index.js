@@ -11,7 +11,7 @@ const htmlHeaders = {
 
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 const MAX_SUMMARY_SOURCE_CHARS = 12000;
-const FREE_SUMMARY_LIMIT = 10;
+const DEFAULT_FREE_SUMMARY_LIMIT = 10;
 const PRO_MONTHLY_SUMMARY_LIMIT = 250;
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
 
@@ -103,21 +103,26 @@ function containsActionableHarmfulInstructions(text) {
   return harmfulSubject.test(lower) && instructionalSignal.test(lower);
 }
 
-function usagePeriodFor(user) {
-  if (user?.role === 'admin' || ['active', 'canceling'].includes(user?.subscription_status)) {
+function freeSummaryLimit(env) {
+  const configured = Number(env.FREE_SUMMARY_LIMIT);
+  return Number.isInteger(configured) && configured > 0 && configured <= 1000 ? configured : DEFAULT_FREE_SUMMARY_LIMIT;
+}
+
+function usagePeriodFor(user, env) {
+  if (user?.role === 'admin' || ['active', 'canceling'].includes(user?.subscription_status) || env.FREE_SUMMARY_PERIOD === 'monthly') {
     return new Date().toISOString().slice(0, 7);
   }
   return 'lifetime';
 }
 
-function summaryLimitFor(user) {
+function summaryLimitFor(user, env) {
   if (user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com') return Number.MAX_SAFE_INTEGER;
-  return ['active', 'canceling'].includes(user?.subscription_status) ? PRO_MONTHLY_SUMMARY_LIMIT : FREE_SUMMARY_LIMIT;
+  return ['active', 'canceling'].includes(user?.subscription_status) ? PRO_MONTHLY_SUMMARY_LIMIT : freeSummaryLimit(env);
 }
 
 async function reserveSummaryQuota(env, user) {
-  const periodKey = usagePeriodFor(user);
-  const limit = summaryLimitFor(user);
+  const periodKey = usagePeriodFor(user, env);
+  const limit = summaryLimitFor(user, env);
   if (limit === Number.MAX_SAFE_INTEGER) return { allowed: true, periodKey, limit };
   await env.DB.prepare('INSERT OR IGNORE INTO summary_usage (user_id, period_key) VALUES (?, ?)').bind(user.id, periodKey).run();
   const result = await env.DB.prepare(`UPDATE summary_usage SET summary_count = summary_count + 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND period_key = ? AND summary_count < ?`)
@@ -132,7 +137,7 @@ async function recordSummaryTokens(env, user, periodKey, usage) {
 }
 
 async function releaseSummaryQuota(env, user, periodKey) {
-  if (!periodKey || summaryLimitFor(user) === Number.MAX_SAFE_INTEGER) return;
+  if (!periodKey || summaryLimitFor(user, env) === Number.MAX_SAFE_INTEGER) return;
   await env.DB.prepare('UPDATE summary_usage SET summary_count = MAX(0, summary_count - 1), updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND period_key = ?')
     .bind(user.id, periodKey).run();
 }
@@ -170,6 +175,25 @@ function briefSessionCookie(token, clear = false) {
 
 function isBriefAdmin(user) {
   return user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com';
+}
+
+function normalizedEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isOwnerEmail(email) {
+  return normalizedEmail(email) === 'berkaytaskol@gmail.com';
+}
+
+async function isEnvironmentAccessAllowed(env, email) {
+  if (env.ACCESS_MODE !== 'allowlist' || isOwnerEmail(email)) return true;
+  try {
+    const match = await env.DB.prepare('SELECT 1 AS allowed FROM pilot_access WHERE email = ?').bind(normalizedEmail(email)).first();
+    return Boolean(match?.allowed);
+  } catch (error) {
+    // A restricted environment must fail closed if its allowlist is unavailable.
+    return false;
+  }
 }
 
 function canManageFeedback(user) {
@@ -219,16 +243,16 @@ async function verifyTokenOrSession(authHeader, env) {
 
   try {
     const dbUser = await env.DB.prepare(`SELECT * FROM users WHERE session_token = ?`).bind(token).first();
-    if (dbUser) return dbUser;
+    if (dbUser && await isEnvironmentAccessAllowed(env, dbUser.email)) return dbUser;
   } catch (e) {}
 
   const googleUser = await verifyGoogleToken(token);
   if (googleUser) {
     try {
       const dbUser = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(googleUser.sub).first();
-      if (dbUser) return dbUser;
+      if (dbUser && await isEnvironmentAccessAllowed(env, dbUser.email)) return dbUser;
     } catch (e) {}
-    return { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, subscription_status: 'trial', role: 'user', created_at: new Date().toISOString() };
+    if (await isEnvironmentAccessAllowed(env, googleUser.email)) return { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, subscription_status: 'trial', role: 'user', created_at: new Date().toISOString() };
   }
 
   return null;
@@ -441,6 +465,11 @@ function renderAdminTeamPage(token, members) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team access — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.card,.member,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.grant{display:grid;gap:10px;grid-template-columns:1fr 180px auto;margin:22px 0}.grant input,.grant select,.grant button,.member select{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:9px}.grant button{background:#111827;color:#fff;cursor:pointer}.member{align-items:center;display:flex;justify-content:space-between;margin:10px 0}.member strong,.member small{display:block}.member label{color:#6b7280;display:grid;font-size:12px;gap:5px}.notice{color:#b91c1c;font-size:13px;margin-top:8px}@media(max-width:600px){.grant{grid-template-columns:1fr}.member{align-items:flex-start;gap:12px;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Team access</h1><p class="muted">Grant access inside Brief without giving anyone Cloudflare, Stripe, deployment, or secret-key permissions. People must sign in to Brief once before you can add them.</p><section class="card"><strong>Grant access</strong><form class="grant" id="grant-form"><input id="invite-email" type="email" placeholder="teammate@example.com" required><select id="invite-role"><option value="feedback_reviewer">Feedback reviewer</option><option value="admin">Admin</option></select><button type="submit">Grant access</button></form><div id="notice" class="notice" role="status"></div></section><section><h2>People with access</h2>${rows}</section></main><script>const token=${JSON.stringify(token)};const notice=document.getElementById('notice');async function setRole(email,role){const res=await fetch('/api/admin/team',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({email,role})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not update access.');}document.getElementById('grant-form').addEventListener('submit',async event=>{event.preventDefault();notice.textContent='';try{await setRole(document.getElementById('invite-email').value,document.getElementById('invite-role').value);window.location.reload();}catch(error){notice.textContent=error.message;}});document.querySelectorAll('.member-role').forEach(select=>select.addEventListener('change',async()=>{notice.textContent='';try{await setRole(select.dataset.email,select.value);window.location.reload();}catch(error){notice.textContent=error.message;}}));</script></body></html>`;
 }
 
+function renderAdminPilotPage(token, participants) {
+  const rows = participants.length ? participants.map(person => `<article class="person"><div><strong>${escapeHtml(person.email)}</strong><small>Added ${escapeHtml(formatMadridTime(person.created_at))}</small></div><button data-email="${escapeHtml(person.email)}" class="revoke">Remove</button></article>`).join('') : '<div class="empty">No pilot users have been invited yet.</div>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pilot access — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.card,.person,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.grant{display:flex;gap:10px;margin:18px 0}.grant input,.grant button,.revoke{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:9px}.grant input{flex:1}.grant button{background:#111827;color:#fff;cursor:pointer}.person{align-items:center;display:flex;justify-content:space-between;margin:10px 0}.person strong,.person small{display:block}.revoke{color:#b91c1c;cursor:pointer}.notice{color:#b91c1c;font-size:13px;margin-top:8px}@media(max-width:600px){.grant{flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Pilot access</h1><p class="muted">Only listed emails can sign in when this environment uses invitation-only access. Removing someone ends access on their next request.</p><section class="card"><strong>Invite a pilot user</strong><form class="grant" id="grant-form"><input id="email" type="email" placeholder="pilot@example.com" required><button type="submit">Add access</button></form><div id="notice" class="notice" role="status"></div></section><section><h2>Invited users</h2>${rows}</section></main><script>const token=${JSON.stringify(token)};const notice=document.getElementById('notice');async function change(email,action){const res=await fetch('/api/admin/pilots',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({email,action})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not update access.');}document.getElementById('grant-form').addEventListener('submit',async e=>{e.preventDefault();notice.textContent='';try{await change(document.getElementById('email').value,'add');window.location.reload();}catch(error){notice.textContent=error.message;}});document.querySelectorAll('.revoke').forEach(button=>button.addEventListener('click',async()=>{notice.textContent='';try{await change(button.dataset.email,'remove');window.location.reload();}catch(error){notice.textContent=error.message;}}));</script></body></html>`;
+}
+
 function renderReportPage(token) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report an issue — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:640px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted{color:#6b7280;font-size:14px;line-height:1.55}.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-top:22px;padding:18px}label{display:grid;font-size:13px;font-weight:600;gap:6px;margin:14px 0}input,select,textarea,button{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:10px}textarea{min-height:130px;resize:vertical}button{background:#111827;color:#fff;cursor:pointer;font-weight:600}.notice{font-size:13px;margin:12px 0;min-height:18px}.success{color:#047857}.error{color:#b91c1c}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Report an issue or share an idea</h1><p class="muted">Send a short report to the Brief team. Your saved articles and summary content are not included automatically.</p><form class="card" id="report-form"><label>Type<select id="category"><option value="bug">Bug</option><option value="idea">Idea</option><option value="question">Question</option></select></label><label>What happened or what would help?<textarea id="message" maxlength="1000" required placeholder="Up to 1,000 characters"></textarea></label><label>Affected page URL (optional)<input id="page-url" type="url" maxlength="2000" placeholder="https://..."></label><div id="notice" class="notice" role="status"></div><button type="submit">Send report</button></form></main><script>const token=${JSON.stringify(token)};const form=document.getElementById('report-form');const notice=document.getElementById('notice');form.addEventListener('submit',async event=>{event.preventDefault();notice.className='notice';notice.textContent='Sending…';try{const res=await fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({category:document.getElementById('category').value,message:document.getElementById('message').value,pageUrl:document.getElementById('page-url').value,source:'dashboard'})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not send the report.');form.reset();notice.className='notice success';notice.textContent='Thank you — your report was sent.';}catch(error){notice.className='notice error';notice.textContent=error.message;}});</script></body></html>`;
 }
@@ -489,6 +518,9 @@ export default {
         const googleUser = await verifyGoogleToken(googleToken);
 
         if (!googleUser) return new Response(JSON.stringify({ error: "Invalid Google Token" }), { status: 401, headers: corsHeaders });
+        if (!await isEnvironmentAccessAllowed(env, googleUser.email)) {
+          return new Response(JSON.stringify({ error: "This environment is invitation-only. Ask the Brief team for access." }), { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }
 
         // In the temporary environment, verify Google identity without changing
         // the production user record or replacing its normal session token.
@@ -668,6 +700,14 @@ export default {
       return new Response(renderAdminTeamPage(token, members), { headers: htmlHeaders });
     }
 
+    if (url.pathname === "/admin/pilots" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
+      const { results } = await env.DB.prepare('SELECT email, created_at FROM pilot_access ORDER BY created_at DESC, email COLLATE NOCASE').all();
+      return new Response(renderAdminPilotPage(token, results || []), { headers: htmlHeaders });
+    }
+
     if (url.pathname === "/dashboard" && req.method === "GET") {
       if (url.searchParams.get("action") === "logout") {
         return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true, env.CHROME_WEB_STORE_URL), { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie('', true) } });
@@ -777,10 +817,11 @@ export default {
         </div>
       `).join("") : `<div class="empty-state">No saved briefs found. Use Brief to capture pages.</div>`;
 
-      const badgeText = trialInfo.status === 'admin' ? 'Admin Access' : (trialInfo.status === 'active' ? 'Pro Member' : 'Free Plan · 10 total');
+      const freeQuotaText = env.FREE_SUMMARY_PERIOD === 'monthly' ? `${freeSummaryLimit(env)} per month` : `${freeSummaryLimit(env)} total`;
+      const badgeText = trialInfo.status === 'admin' ? 'Admin Access' : (trialInfo.status === 'active' ? 'Pro Member' : `Free Plan · ${freeQuotaText}`);
       const badgeStyle = trialInfo.status === 'admin' ? 'background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe;' : (trialInfo.status === 'active' ? 'background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;' : 'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;');
 
-      const upgradeBtnHtml = (trialInfo.status !== 'active' && trialInfo.status !== 'admin') ? `
+      const upgradeBtnHtml = (env.PAYMENTS_ENABLED === 'true' && trialInfo.status !== 'active' && trialInfo.status !== 'admin') ? `
         <button id="upgradeBtn" class="btn-upgrade">Upgrade</button>
       ` : '';
       const reportBtnHtml = '<button class="dropdown-item" id="reportBtn">Report an issue or idea</button>';
@@ -788,6 +829,7 @@ export default {
       const adminReportsBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="reportsBtn">Reports</button>' : '';
       const adminUsersBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="usersBtn">Users & activity</button>' : '';
       const adminTeamBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="teamBtn">Team access</button>' : '';
+      const adminPilotBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="pilotBtn">Pilot access</button>' : '';
       const adminOnboardingPreviewBtnHtml = isBriefAdmin(user) && env.SEED_TAG_DEMO === 'true' ? '<button class="dropdown-item" id="onboardingPreviewBtn">Preview extension setup</button>' : '';
 
       const html = `
@@ -923,6 +965,7 @@ export default {
                   ${adminReportsBtnHtml}
                   ${adminUsersBtnHtml}
                   ${adminTeamBtnHtml}
+                  ${adminPilotBtnHtml}
                   ${adminOnboardingPreviewBtnHtml}
                   <button class="dropdown-item" id="logoutBtn">Sign Out</button>
                   ${['active', 'canceling'].includes(user.subscription_status) && user.stripe_customer_id ? '<button class="dropdown-item" id="manageBillingBtn">Manage subscription</button>' : ''}
@@ -1143,6 +1186,8 @@ export default {
             if (usersBtn) usersBtn.onclick = () => { window.location.href = '/admin/users?token=${encodeURIComponent(token)}'; };
             const teamBtn = document.getElementById('teamBtn');
             if (teamBtn) teamBtn.onclick = () => { window.location.href = '/admin/team?token=${encodeURIComponent(token)}'; };
+            const pilotBtn = document.getElementById('pilotBtn');
+            if (pilotBtn) pilotBtn.onclick = () => { window.location.href = '/admin/pilots?token=${encodeURIComponent(token)}'; };
             const onboardingPreviewBtn = document.getElementById('onboardingPreviewBtn');
             if (onboardingPreviewBtn) onboardingPreviewBtn.onclick = () => { window.location.href = '/dashboard?preview=extension-onboarding&token=${encodeURIComponent(token)}'; };
 
@@ -1559,6 +1604,22 @@ export default {
       const result = await env.DB.prepare('UPDATE users SET role = ? WHERE lower(email) = ?').bind(role, email).run();
       if (result.meta?.changes !== 1) {
         return new Response(JSON.stringify({ error: 'That person has not signed in to Brief yet. Ask them to sign in once with this email, then try again.' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
+    if (url.pathname === "/api/admin/pilots" && req.method === "POST") {
+      if (!isBriefAdmin(user)) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      const body = await req.json().catch(() => ({}));
+      const email = normalizedEmail(body?.email);
+      const action = String(body?.action || '');
+      if (!/^\S+@\S+\.\S+$/.test(email) || !['add', 'remove'].includes(action) || isOwnerEmail(email)) {
+        return new Response(JSON.stringify({ error: 'Enter a valid non-owner email and action.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      if (action === 'add') {
+        await env.DB.prepare('INSERT OR IGNORE INTO pilot_access (email, added_by) VALUES (?, ?)').bind(email, user.email).run();
+      } else {
+        await env.DB.prepare('DELETE FROM pilot_access WHERE email = ?').bind(email).run();
       }
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
