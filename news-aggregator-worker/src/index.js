@@ -352,7 +352,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           Sign in with Google
         </a>
         ${hasChromeWebStoreLink ? `<div class="extension-cta"><p>New to Brief? Install the Chrome extension first.</p><a class="btn-extension" href="${escapeHtml(installUrl)}" target="_blank" rel="noopener noreferrer">Add Brief to Chrome — Free ↗</a></div>` : ''}
-        <div class="fine-print">Free includes 10 summaries. Pro is €7/month or €59/year, plus applicable taxes. Sign in to see plans and upgrade securely through Stripe.</div>
+        <div class="fine-print">Free includes 10 summaries. Pro is €7/month or €59/year, including applicable taxes. Choose yearly and save €25. Sign in to see plans and upgrade securely through Stripe.</div>
       </div>
 
       <script>
@@ -421,7 +421,7 @@ function renderStripePricingPage(origin, user, token, env) {
     <script async src="https://js.stripe.com/v3/pricing-table.js"></script>
     <style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:40px 20px}.wrap{margin:0 auto;max-width:920px}.top{align-items:center;display:flex;gap:14px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;font-size:14px;margin-left:auto;text-decoration:none}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 8px}p{color:#6b7280;margin:0 0 30px} </style></head>
     <body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="${origin}/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div>
-    <h1>Choose the plan that works for you</h1><p>Free needs no payment method. Prices exclude applicable taxes; Stripe shows your final total at checkout. Paid plans are managed securely by Stripe and can be cancelled there.</p>
+    <h1>Choose the plan that works for you</h1><p>Free needs no payment method. Prices include applicable taxes, with details shown by Stripe at checkout. Choose yearly and save €25. Paid plans are managed securely by Stripe and can be cancelled there.</p>
     <stripe-pricing-table pricing-table-id="${escapeHtml(env.STRIPE_PRICING_TABLE_ID)}" publishable-key="${escapeHtml(env.STRIPE_PUBLISHABLE_KEY)}" client-reference-id="${escapeHtml(user.id)}"></stripe-pricing-table>
     </main></body></html>`;
 }
