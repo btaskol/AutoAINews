@@ -433,10 +433,9 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         .consent-note { color: var(--text-muted); font-size: 12px; line-height: 1.45; margin: 14px auto 0; max-width: 420px; }
         .consent-note a { color: #2563eb; text-decoration: none; }
         .consent-note a:hover { text-decoration: underline; }
-        .fine-print { color: var(--text-muted); font-size: 12px; margin: 18px 0 0; }
-        .legal-links { display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 12px; justify-content: center; margin-top: 14px; }
-        .legal-links a { color: var(--text-muted); text-decoration: none; }
-        .legal-links a:hover { color: #2563eb; text-decoration: underline; }
+        .support-note { color: var(--text-muted); font-size: 12px; margin: 18px 0 0; }
+        .support-note a { color: var(--text-muted); text-decoration: none; }
+        .support-note a:hover { color: #2563eb; text-decoration: underline; }
         .beta-pill { background: #eff6ff; border-radius: 999px; color: #1d4ed8; display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .03em; margin: 0; padding: 4px 9px; text-transform: uppercase; }
         .beta-description { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; color: #1d4ed8; font-size: 13px; margin: 0 auto 24px; max-width: 520px; padding: 10px 14px; }
         @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } }
@@ -456,8 +455,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         </a>
         <p class="consent-note">By continuing, you agree to the <a href="/terms">Terms of Use</a> and acknowledge the <a href="/privacy">Privacy Policy</a>.</p>
         ${hasChromeWebStoreLink ? `<div class="extension-cta"><p>New to Brief? Install the Chrome extension first.</p><a class="btn-extension" href="${escapeHtml(installUrl)}" target="_blank" rel="noopener noreferrer">Add Brief to Chrome — Free ↗</a></div>` : ''}
-        <div class="fine-print">${isBeta ? 'Beta access is free. Your 25 summaries renew each month.' : 'Free includes 10 summaries. Pro is €7/month or €59/year, including applicable taxes. Choose yearly and save €25. Sign in to see plans and upgrade securely through Stripe.'}</div>
-        <nav class="legal-links" aria-label="Legal and support"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Support</a></nav>
+        <div class="support-note">Questions? <a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Contact brieflykeephq@gmail.com</a>.</div>
       </div>
 
       <script>
