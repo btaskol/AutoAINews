@@ -455,7 +455,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         </a>
         <p class="consent-note">By continuing, you agree to the <a href="/terms">Terms of Use</a> and acknowledge the <a href="/privacy">Privacy Policy</a>.</p>
         ${hasChromeWebStoreLink ? `<div class="extension-cta"><p>New to Brief? Install the Chrome extension first.</p><a class="btn-extension" href="${escapeHtml(installUrl)}" target="_blank" rel="noopener noreferrer">Add Brief to Chrome — Free ↗</a></div>` : ''}
-        <div class="support-note">Questions? <a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Contact brieflykeephq@gmail.com</a>.</div>
+        <div class="support-note"><a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Support</a></div>
       </div>
 
       <script>
