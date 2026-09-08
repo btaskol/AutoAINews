@@ -280,12 +280,13 @@ function renderUI(context) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
   const summaryLanguages = [
-    ["auto", "Same as article"], ["en", "English"], ["tr", "Türkçe"],
-    ["de", "Deutsch"], ["es", "Español"], ["fr", "Français"],
-    ["it", "Italiano"], ["pt", "Português"], ["nl", "Nederlands"],
-    ["pl", "Polski"], ["ru", "Русский"], ["uk", "Українська"],
-    ["ar", "العربية"], ["ja", "日本語"], ["ko", "한국어"],
-    ["zh", "中文"], ["hi", "हिन्दी"]
+    ["auto", "Same as article"],
+    ["en", "English"], ["zh", "中文"], ["hi", "हिन्दी"],
+    ["es", "Español"], ["ar", "العربية"], ["fr", "Français"],
+    ["pt", "Português"], ["ru", "Русский"], ["de", "Deutsch"],
+    ["ja", "日本語"], ["tr", "Türkçe"], ["ko", "한국어"],
+    ["it", "Italiano"], ["pl", "Polski"], ["uk", "Українська"],
+    ["nl", "Nederlands"]
   ];
   const selectedSummaryLanguage = summaryLanguages.some(([value]) => value === context.summaryLanguage)
     ? context.summaryLanguage
