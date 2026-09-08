@@ -431,6 +431,9 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         .value-list { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 13px; gap: 8px 18px; justify-content: center; list-style: none; margin: 0 0 28px; padding: 0; }
         .value-list li::before { content: '✓'; color: #059669; font-weight: 700; margin-right: 6px; }
         .fine-print { color: var(--text-muted); font-size: 12px; margin: 18px 0 0; }
+        .legal-links { display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 12px; justify-content: center; margin-top: 18px; }
+        .legal-links a { color: var(--text-muted); text-decoration: none; }
+        .legal-links a:hover { color: #2563eb; text-decoration: underline; }
         .beta-pill { background: #eff6ff; border-radius: 999px; color: #1d4ed8; display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .03em; margin: 0; padding: 4px 9px; text-transform: uppercase; }
         .beta-description { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; color: #1d4ed8; font-size: 13px; margin: 0 auto 24px; max-width: 520px; padding: 10px 14px; }
         @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } }
@@ -450,6 +453,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         </a>
         ${hasChromeWebStoreLink ? `<div class="extension-cta"><p>New to Brief? Install the Chrome extension first.</p><a class="btn-extension" href="${escapeHtml(installUrl)}" target="_blank" rel="noopener noreferrer">Add Brief to Chrome — Free ↗</a></div>` : ''}
         <div class="fine-print">${isBeta ? 'Beta access is free. Your 25 summaries renew each month.' : 'Free includes 10 summaries. Pro is €7/month or €59/year, including applicable taxes. Choose yearly and save €25. Sign in to see plans and upgrade securely through Stripe.'}</div>
+        <nav class="legal-links" aria-label="Legal and support"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Support</a></nav>
       </div>
 
       <script>
@@ -507,6 +511,49 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
     </body>
     </html>
   `;
+}
+
+function renderLegalPage(origin, page) {
+  const isPrivacy = page === 'privacy';
+  const title = isPrivacy ? 'Privacy Policy' : 'Terms of Use';
+  const body = isPrivacy ? `
+    <p class="lead">This policy explains how BrieflyKeep (“Brief”, “we”, “us”) handles information when you use the Brief browser extension and dashboard.</p>
+    <h2>Information we process</h2>
+    <ul>
+      <li><strong>Account information:</strong> your Google account ID, email address, name, and profile image supplied when you choose to sign in with Google.</li>
+      <li><strong>Content you choose to capture:</strong> page URLs, page or selected text, page titles, generated summaries, tags, notes, and pins. Do not capture content you are not permitted to share or process.</li>
+      <li><strong>Service and support information:</strong> summary-language preference, quota and usage records, your most recent meaningful activity, ratings, optional feedback, and issue reports (including an optional page URL).</li>
+      <li><strong>Session information:</strong> an authentication session cookie and local browser storage needed to keep you signed in and remember display preferences.</li>
+    </ul>
+    <h2>How we use it</h2>
+    <p>We use this information to authenticate you, create and store your personal library, generate requested summaries, apply plan limits, provide support, protect the service from abuse, and improve Brief from optional feedback. We do not sell personal information or use saved content for advertising.</p>
+    <h2>Service providers and sharing</h2>
+    <p>Brief uses <strong>Google</strong> for sign-in, <strong>Cloudflare</strong> to run the service and store application data, and <strong>Groq</strong> to generate a summary when you ask for one. The text and title you submit for a summary, plus your selected output language, are sent to Groq for that purpose. We share information only with providers needed to operate Brief, to comply with law, or to protect against fraud or abuse.</p>
+    <h2>Storage and retention</h2>
+    <p>Your saved content remains in your library until you delete it or delete your account. You can delete individual captures from the dashboard. Deleting your account removes your account profile, saved captures, tags, notes, feedback, reports, usage records, and associated stored snapshots. We may retain a minimal record, such as an email used for a free entitlement, where necessary to enforce limits, prevent abuse, or meet legal obligations.</p>
+    <h2>Your choices and rights</h2>
+    <p>You can sign out, delete individual captures, or use <strong>Delete Account</strong> in the dashboard. For access, correction, deletion, or privacy questions, contact us at <a href="mailto:brieflykeephq@gmail.com?subject=Brief%20privacy%20request">brieflykeephq@gmail.com</a>. If applicable law gives you additional rights, you may exercise them through that contact.</p>
+    <h2>Security and changes</h2>
+    <p>We use reasonable technical measures designed to protect information in transit and at rest. No online service can guarantee absolute security. We may update this policy as Brief evolves; the current version is always available at this page.</p>
+  ` : `
+    <p class="lead">These Terms govern your use of BrieflyKeep (“Brief”, “we”, “us”), including the browser extension and dashboard.</p>
+    <h2>Beta service</h2>
+    <p>Brief is currently an early-access beta. It is provided free while we learn. Features, limits, availability, and the service may change, be interrupted, or end before any paid launch. We do not promise that summaries are complete, accurate, current, or suitable for a particular purpose.</p>
+    <h2>Your use of Brief</h2>
+    <p>You may use Brief for lawful personal or professional reading and research. You are responsible for the pages and text you choose to submit. Do not use Brief to submit unlawful material, infringe others’ rights, bypass access controls or paywalls, interfere with the service, or attempt to abuse, reverse engineer, or automate the service beyond its intended use.</p>
+    <h2>AI-generated summaries</h2>
+    <p>Summaries are generated from the source you provide and can contain omissions or errors. They are an aid to reading, not professional, legal, medical, financial, safety, or other expert advice. Check the original source before relying on a summary or making a decision.</p>
+    <h2>Your content and our service</h2>
+    <p>You keep any rights you have in content you submit. You give us the limited permission needed to store and process that content solely to operate, secure, and improve Brief as described in the <a href="/privacy">Privacy Policy</a>. We may apply reasonable limits or suspend access to protect users, providers, and the service.</p>
+    <h2>Account and deletion</h2>
+    <p>Keep your Google account secure. You can delete individual captures or permanently delete your account from the dashboard. Account deletion is irreversible. If a paid plan is introduced later, any additional billing, cancellation, and refund terms will be presented before purchase.</p>
+    <h2>Disclaimers and liability</h2>
+    <p>To the fullest extent permitted by law, Brief is provided “as is” and “as available.” We are not liable for indirect, incidental, special, consequential, or loss-of-data damages arising from use of the beta. Nothing in these Terms limits rights that cannot legally be limited.</p>
+    <h2>Contact and changes</h2>
+    <p>Questions about these Terms can be sent to <a href="mailto:brieflykeephq@gmail.com?subject=Brief%20terms%20question">brieflykeephq@gmail.com</a>. We may update these Terms as Brief changes; continued use after an update means you accept the updated Terms where permitted by law.</p>
+  `;
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — Brief</title><style>:root{--bg:#fcfcfc;--card:#fff;--text:#111827;--muted:#6b7280;--border:#e5e7eb;--link:#2563eb}*{box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;line-height:1.6;margin:0;padding:32px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;border-bottom:1px solid var(--border);display:flex;gap:10px;margin-bottom:28px;padding-bottom:18px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.brand{color:var(--text);font-weight:700;text-decoration:none}.back{color:var(--link);font-size:14px;margin-left:auto;text-decoration:none}.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px}h1{font-size:30px;letter-spacing:-.03em;line-height:1.15;margin:0 0 6px}h2{font-size:18px;margin:28px 0 8px}.updated,.lead{color:var(--muted)}.updated{font-size:13px;margin:0 0 24px}.lead{font-size:16px;margin:0}p{margin:0 0 14px}ul{margin:0 0 14px;padding-left:22px}li{margin:8px 0}a{color:var(--link)}footer{color:var(--muted);font-size:13px;margin:22px 0;text-align:center}footer a{margin:0 8px;text-decoration:none}@media(max-width:560px){body{padding:20px 14px}.card{padding:22px 18px}h1{font-size:26px}}</style></head><body><main class="wrap"><header class="top"><div class="mark">B</div><a class="brand" href="/">Brief</a><a class="back" href="${escapeHtml(origin)}/dashboard">Dashboard</a></header><article class="card"><h1>${title}</h1><p class="updated">Effective date: 8 September 2026</p>${body}</article><footer><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Support</a></footer></main></body></html>`;
 }
 
 function renderStripePricingPage(origin, user, token, env) {
@@ -576,6 +623,14 @@ export default {
 
     if (url.pathname === "/" && req.method === "GET") {
       return new Response(renderMinimalAuthPage(origin, '', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
+    }
+
+    if (["/privacy", "/privacy-policy"].includes(url.pathname) && req.method === "GET") {
+      return new Response(renderLegalPage(origin, 'privacy'), { headers: htmlHeaders });
+    }
+
+    if (["/terms", "/terms-of-use"].includes(url.pathname) && req.method === "GET") {
+      return new Response(renderLegalPage(origin, 'terms'), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/pricing" && req.method === "GET") {
@@ -992,6 +1047,9 @@ export default {
             .btn-expand:hover { text-decoration: underline; }
             .card-note { font-size: 12px; color: var(--note-text); margin-top: 10px; background: var(--note-bg); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--note-border); }
             .card-footer { margin-top: 14px; display: flex; justify-content: flex-end; }
+            .dashboard-footer { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 14px; justify-content: center; margin: 28px 0 4px; }
+            .dashboard-footer a { color: var(--text-muted); text-decoration: none; }
+            .dashboard-footer a:hover { color: var(--accent); text-decoration: underline; }
             .resource-link { font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 500; }
             .resource-link:hover { text-decoration: underline; }
             .empty-state { text-align: center; padding: 48px 20px; color: var(--text-muted); background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
@@ -1058,6 +1116,7 @@ export default {
 
           <main id="cardsContainer">${cardsHtml}</main>
           <div id="noSearchResults" class="empty-state" style="display: none;">No matching briefs found.</div>
+          <footer class="dashboard-footer"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">Support</a></footer>
 
           <script>
             const upgradeBtn = document.getElementById('upgradeBtn');
@@ -1773,6 +1832,13 @@ export default {
       for (const row of results) {
         if (row.snapshot_key) await env.SNAPSHOTS.delete(row.snapshot_key);
       }
+      await env.DB.prepare("DELETE FROM feedback_review_status WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM user_product_feedback WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM user_reports WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM summary_usage WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM summary_tags WHERE summary_id IN (SELECT id FROM summaries WHERE user_id = ?)").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM summaries WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM tags WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
