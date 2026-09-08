@@ -517,7 +517,8 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
 
 function renderLegalPage(origin, page) {
   const isPrivacy = page === 'privacy';
-  const title = isPrivacy ? 'Privacy Policy' : 'Terms of Use';
+  const isSupport = page === 'support';
+  const title = isPrivacy ? 'Privacy Policy' : isSupport ? 'Support' : 'Terms of Use';
   const body = isPrivacy ? `
     <p class="lead">This policy explains how BrieflyKeep (“Brief”, “we”, “us”) handles information when you use the Brief browser extension and dashboard.</p>
     <h2>Information we process</h2>
@@ -537,6 +538,14 @@ function renderLegalPage(origin, page) {
     <p>You can sign out, delete individual captures, or use <strong>Delete Account</strong> in the dashboard. For access, correction, deletion, or privacy questions, contact us at <a href="mailto:brieflykeephq@gmail.com?subject=Brief%20privacy%20request">brieflykeephq@gmail.com</a>. If applicable law gives you additional rights, you may exercise them through that contact.</p>
     <h2>Security and changes</h2>
     <p>We use reasonable technical measures designed to protect information in transit and at rest. No online service can guarantee absolute security. We may update this policy as Brief evolves; the current version is always available at this page.</p>
+  ` : isSupport ? `
+    <p class="lead">Need help with Brief? We are a small early-access beta team and read every message.</p>
+    <h2>Contact support</h2>
+    <p>Email us at <a href="mailto:brieflykeephq@gmail.com?subject=Brief%20support">brieflykeephq@gmail.com</a>. Please include the page you were using, what you expected to happen, and what happened instead. Do not send passwords, payment details, or private article content unless it is essential to your request.</p>
+    <h2>Report an issue from Brief</h2>
+    <p>If you are signed in, you can also use the <strong>Report an issue or share an idea</strong> option in the dashboard. It lets you send a short bug report, question, or suggestion without automatically attaching your saved articles.</p>
+    <h2>Privacy and account help</h2>
+    <p>For account deletion or privacy requests, email the same address with “Privacy request” in the subject. You can also review our <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms of Use</a>.</p>
   ` : `
     <p class="lead">These Terms govern your use of BrieflyKeep (“Brief”, “we”, “us”), including the browser extension and dashboard.</p>
     <h2>Beta service</h2>
@@ -633,6 +642,10 @@ export default {
 
     if (["/terms", "/terms-of-use"].includes(url.pathname) && req.method === "GET") {
       return new Response(renderLegalPage(origin, 'terms'), { headers: htmlHeaders });
+    }
+
+    if (url.pathname === "/support" && req.method === "GET") {
+      return new Response(renderLegalPage(origin, 'support'), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/pricing" && req.method === "GET") {
