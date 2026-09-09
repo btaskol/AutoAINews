@@ -10,7 +10,7 @@
     }
   ],
   "vars": {
-    "ACCESS_MODE": "allowlist",
+    "ACCESS_MODE": "public",
     "APP_STAGE": "beta",
     "FREE_SUMMARY_LIMIT": "25",
     "FREE_SUMMARY_PERIOD": "monthly",
