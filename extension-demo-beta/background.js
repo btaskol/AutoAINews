@@ -253,13 +253,18 @@ function injectModal(tab, isSelection, selectedText = "") {
     let finalIsSelection = isSelection;
 
     if (!isSelection) {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          const sel = window.getSelection().toString().trim();
-          return sel ? { isSelection: true, text: sel } : { isSelection: false, text: document.body.innerText };
-        }
-      });
+      let results;
+      try {
+        results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const sel = window.getSelection().toString().trim();
+            return sel ? { isSelection: true, text: sel } : { isSelection: false, text: document.body.innerText };
+          }
+        });
+      } catch {
+        return;
+      }
       const payload = results?.[0]?.result || { isSelection: false, text: "" };
       textToUse = payload.text;
       finalIsSelection = payload.isSelection;
@@ -277,7 +282,7 @@ function injectModal(tab, isSelection, selectedText = "") {
         isSelection: finalIsSelection,
         summaryLanguage: res.summaryLanguage || "auto"
       }]
-    });
+    }).catch(() => {});
   });
 }
 
