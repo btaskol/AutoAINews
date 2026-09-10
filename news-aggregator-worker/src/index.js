@@ -988,6 +988,19 @@ export default {
         list.push(row);
         tagsBySummary.set(row.summary_id, list);
       });
+      const { results: collectionRows } = await env.DB.prepare(`
+        SELECT child.id, child.name, child.parent_id, parent.name AS parent_name
+        FROM collections child
+        LEFT JOIN collections parent ON parent.id = child.parent_id
+        WHERE child.user_id = ?
+        ORDER BY COALESCE(parent.name, child.name) COLLATE NOCASE, child.parent_id IS NOT NULL, child.name COLLATE NOCASE
+      `).bind(user.id).all();
+      const collectionsById = new Map(collectionRows.map(collection => [String(collection.id), collection]));
+      const collectionOptionsHtml = collectionRows.map(collection => {
+        const label = collection.parent_name ? `${collection.parent_name} / ${collection.name}` : collection.name;
+        return `<option value="${collection.id}">${escapeHtml(label)}</option>`;
+      }).join('');
+      const tagSuggestionsHtml = tags.map(tag => `<option value="${escapeHtml(tag.name)}"></option>`).join('');
       const tagFiltersHtml = tags.length > 0 ? `
         <div class="tag-filter" aria-label="Filter briefs by tag">
           <span class="tag-filter-label">Tags</span>
@@ -1001,13 +1014,14 @@ export default {
         </div>` : '';
 
       const cardsHtml = results.length > 0 ? results.map(s => `
-        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-created="${escapeHtml(s.created_at || '')}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}">
+        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-created="${escapeHtml(s.created_at || '')}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}" data-collection="${s.collection_id || ''}">
           <div class="card-header">
             <div class="card-context">
               <span class="card-source">${escapeHtml(sourceLabelForUrl(s.url))}</span>
               <span id="tag-display-${s.id}" class="card-tag">${(tagsBySummary.get(s.id) || []).map(tag => `<button type="button" class="card-tag-chip" data-tag="${tag.id}">${escapeHtml(tag.name)}</button>`).join('')}</span>
+              ${s.collection_id && collectionsById.get(String(s.collection_id)) ? `<span id="collection-display-${s.id}" class="card-collection">${escapeHtml(collectionsById.get(String(s.collection_id)).parent_name ? `${collectionsById.get(String(s.collection_id)).parent_name} / ${collectionsById.get(String(s.collection_id)).name}` : collectionsById.get(String(s.collection_id)).name)}</span>` : `<span id="collection-display-${s.id}" class="card-collection" style="display:none;"></span>`}
             </div>
-            <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml((tagsBySummary.get(s.id) || []).map(tag => tag.name).join(', '))}" style="display:none;" placeholder="Tags (comma-separated)">
+            <input type="text" id="tag-edit-${s.id}" class="card-input-inline" value="${escapeHtml((tagsBySummary.get(s.id) || []).map(tag => tag.name).join(', '))}" list="existing-tags" autocomplete="off" style="display:none;" placeholder="Tags (comma-separated)">
             <div class="card-meta">
               <span>${escapeHtml(s.created_at) || "Recent"}</span>
               <button onclick="toggleSummaryPin('${s.id}', ${s.is_pinned ? 'false' : 'true'})" data-summary-id="${s.id}" class="btn-pin ${s.is_pinned ? 'pinned' : ''}" aria-label="${s.is_pinned ? 'Unpin' : 'Pin'} saved brief">★</button>
@@ -1026,6 +1040,14 @@ export default {
 
           <div id="note-display-${s.id}" class="card-note" style="${s.comment ? '' : 'display:none;'}">${s.comment ? 'Note: ' + escapeHtml(s.comment) : ''}</div>
           <textarea id="note-edit-${s.id}" class="card-textarea-inline" style="display:none;" placeholder="Add a note...">${escapeHtml(s.comment)}</textarea>
+          <div id="collection-edit-wrap-${s.id}" class="collection-edit" style="display:none;">
+            <label for="collection-edit-${s.id}">Collection</label>
+            <select id="collection-edit-${s.id}" class="card-select-inline">
+              <option value="">Unfiled</option>
+              ${collectionOptionsHtml}
+            </select>
+            <input type="text" id="collection-new-${s.id}" class="card-input-inline" placeholder="Or create: Etsiae / Avionics" autocomplete="off">
+          </div>
           
           <div id="edit-actions-${s.id}" class="edit-actions" style="display:none;">
             <button onclick="saveCardEdit('${s.id}')" class="btn-secondary-sm">Save Changes</button>
@@ -1127,9 +1149,14 @@ export default {
             .card-tag { display: flex; flex-wrap: wrap; gap: 6px; }
             .card-tag-chip { background: #eff6ff; border: 0; border-radius: 12px; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; padding: 3px 7px; }
             [data-theme="dark"] .card-tag-chip { background: #0c4a6e; }
+            .card-collection { background: #f3e8ff; border-radius: 12px; color: #7e22ce; font-size: 12px; font-weight: 600; padding: 3px 7px; }
+            [data-theme="dark"] .card-collection { background: #3b0764; color: #e9d5ff; }
             .card-meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-muted); }
             .card-title { font-size: 15px; font-weight: 600; margin: 0 0 12px 0; color: var(--text); }
             .card-input-inline { font-size: 12px; padding: 4px 8px; background: var(--sub-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: none; width: 50%; }
+            .collection-edit { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+            .collection-edit label { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+            .card-select-inline { background: var(--sub-bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font: inherit; font-size: 12px; max-width: 100%; padding: 4px 8px; }
             .card-title-input-inline { width: 100%; font-size: 15px; font-weight: 600; padding: 6px 10px; margin-bottom: 12px; background: var(--sub-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; outline: none; font-family: inherit; }
             .card-textarea-inline { width: 100%; font-size: 12px; padding: 8px; margin-top: 10px; background: var(--sub-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; outline: none; resize: vertical; font-family: inherit; }
             .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; align-items: center; }
@@ -1156,6 +1183,9 @@ export default {
               .card { padding: 16px; }
               .card-header { align-items: flex-start; flex-direction: column; gap: 10px; }
               .card-meta { flex-wrap: wrap; gap: 10px; }
+              .card-input-inline { width: 100%; }
+              .collection-edit { align-items: stretch; flex-direction: column; }
+              .card-select-inline { width: 100%; }
               .tag-filter { align-items: center; display: grid; gap: 8px; grid-template-columns: 26px minmax(0, 1fr) 26px; }
               .tag-filter-label { grid-column: 1 / -1; line-height: 1; margin-bottom: 2px; }
               .tag-chips { grid-column: 2; min-width: 0; }
@@ -1219,6 +1249,7 @@ export default {
           </div>
           ${extensionOnboardingHtml}
           ${tagFiltersHtml}
+          <datalist id="existing-tags">${tagSuggestionsHtml}</datalist>
 
           <main id="cardsContainer">${cardsHtml}</main>
           <div id="noSearchResults" class="empty-state" style="display: none;">No matching briefs found.</div>
@@ -1261,6 +1292,8 @@ export default {
               document.getElementById('title-edit-' + id).style.display = 'block';
               document.getElementById('note-display-' + id).style.display = 'none';
               document.getElementById('note-edit-' + id).style.display = 'block';
+              document.getElementById('collection-edit-wrap-' + id).style.display = 'flex';
+              document.getElementById('collection-edit-' + id).value = document.getElementById('card-' + id).dataset.collection || '';
               document.getElementById('edit-actions-' + id).style.display = 'flex';
               document.getElementById('btn-edit-' + id).style.display = 'none';
             }
@@ -1279,6 +1312,7 @@ export default {
                 document.getElementById('note-display-' + id).style.display = 'none';
               }
               document.getElementById('note-edit-' + id).style.display = 'none';
+              document.getElementById('collection-edit-wrap-' + id).style.display = 'none';
               document.getElementById('edit-actions-' + id).style.display = 'none';
               document.getElementById('btn-edit-' + id).style.display = 'inline-block';
             }
@@ -1287,6 +1321,8 @@ export default {
               const customTitle = document.getElementById('tag-edit-' + id).value.trim();
               const title = document.getElementById('title-edit-' + id).value.trim();
               const comment = document.getElementById('note-edit-' + id).value.trim();
+              const collectionId = document.getElementById('collection-edit-' + id).value;
+              const newCollectionPath = document.getElementById('collection-new-' + id).value.trim();
 
               try {
                 const res = await fetch('/api/summary/update', {
@@ -1295,7 +1331,7 @@ export default {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ${token}'
                   },
-                  body: JSON.stringify({ id, title, customTitle, comment })
+                  body: JSON.stringify({ id, title, customTitle, comment, collectionId, newCollectionPath })
                 });
                 const data = await res.json();
                 if (data.success) {
@@ -1592,12 +1628,38 @@ export default {
 
     if (url.pathname === "/api/summary/update" && req.method === "POST") {
       try {
-        const { id, title, customTitle, comment } = await req.json();
+        const { id, title, customTitle, comment, collectionId, newCollectionPath } = await req.json();
         if (!id) return new Response(JSON.stringify({ error: "Missing ID" }), { status: 400, headers: corsHeaders });
 
+        let resolvedCollectionId = null;
+        const requestedPath = String(newCollectionPath || '').trim();
+        if (requestedPath) {
+          const segments = requestedPath.split('/').map(segment => segment.trim()).filter(Boolean);
+          if (segments.length === 0 || segments.length > 2) {
+            return new Response(JSON.stringify({ error: "Use one collection or one subcollection, for example Etsiae / Avionics." }), { status: 400, headers: corsHeaders });
+          }
+          const rootName = segments[0].slice(0, 80);
+          await env.DB.prepare("INSERT OR IGNORE INTO collections (user_id, name, parent_id) VALUES (?, ?, NULL)").bind(user.id, rootName).run();
+          const root = await env.DB.prepare("SELECT id FROM collections WHERE user_id = ? AND parent_id IS NULL AND name = ? COLLATE NOCASE").bind(user.id, rootName).first();
+          if (!root) throw new Error("Could not create collection");
+          if (segments.length === 1) {
+            resolvedCollectionId = root.id;
+          } else {
+            const childName = segments[1].slice(0, 80);
+            await env.DB.prepare("INSERT OR IGNORE INTO collections (user_id, name, parent_id) VALUES (?, ?, ?)").bind(user.id, childName, root.id).run();
+            const child = await env.DB.prepare("SELECT id FROM collections WHERE user_id = ? AND parent_id = ? AND name = ? COLLATE NOCASE").bind(user.id, root.id, childName).first();
+            if (!child) throw new Error("Could not create subcollection");
+            resolvedCollectionId = child.id;
+          }
+        } else if (collectionId) {
+          const collection = await env.DB.prepare("SELECT id FROM collections WHERE id = ? AND user_id = ?").bind(collectionId, user.id).first();
+          if (!collection) return new Response(JSON.stringify({ error: "That collection is unavailable." }), { status: 400, headers: corsHeaders });
+          resolvedCollectionId = collection.id;
+        }
+
         await env.DB.prepare(
-          "UPDATE summaries SET title = ?, custom_title = ?, comment = ? WHERE id = ? AND user_id = ?"
-        ).bind(title || "Untitled", customTitle || "", comment || "", id, user.id).run();
+          "UPDATE summaries SET title = ?, custom_title = ?, comment = ?, collection_id = ? WHERE id = ? AND user_id = ?"
+        ).bind(title || "Untitled", customTitle || "", comment || "", resolvedCollectionId, id, user.id).run();
 
         const tagNames = [...new Set((customTitle || '').split(',').map(name => name.trim()).filter(Boolean))].slice(0, 12);
         await env.DB.prepare("DELETE FROM summary_tags WHERE summary_id = ?").bind(id).run();
@@ -1978,6 +2040,7 @@ export default {
       await env.DB.prepare("DELETE FROM summary_tags WHERE summary_id IN (SELECT id FROM summaries WHERE user_id = ?)").bind(user.id).run();
       await env.DB.prepare("DELETE FROM summaries WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM tags WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM collections WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
