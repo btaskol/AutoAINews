@@ -13,6 +13,7 @@ const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.goo
 const MAX_SINGLE_SUMMARY_SOURCE_CHARS = 24000;
 const MAX_CHUNKED_SUMMARY_SOURCE_CHARS = 72000;
 const SUMMARY_CHUNK_CHARS = 18000;
+const MAX_QUICK_SUMMARY_SOURCE_CHARS = 8000;
 const MAX_MODE_SUMMARY_SOURCE_CHARS = 18000;
 const MAX_SOURCE_NOTE_SECTIONS = 16;
 const DEFAULT_FREE_SUMMARY_LIMIT = 10;
@@ -57,9 +58,9 @@ function prepareSummarySourcePlan(value) {
   return { sourceText, chunks: splitSummarySource(sourceText), wasTruncated };
 }
 
-function formatGroundedSummary(data) {
+function formatGroundedSummary(data, pointLimit = 6) {
   const takeaway = String(data?.takeaway || '').trim();
-  const points = Array.isArray(data?.key_points) ? data.key_points.map(point => String(point).trim()).filter(Boolean).slice(0, 6) : [];
+  const points = Array.isArray(data?.key_points) ? data.key_points.map(point => String(point).trim()).filter(Boolean).slice(0, pointLimit) : [];
   const caveat = String(data?.caveat || '').trim();
   const title = String(data?.title || '').replace(/\s+/g, ' ').trim().slice(0, 180);
   if (!takeaway) return null;
@@ -69,6 +70,14 @@ function formatGroundedSummary(data) {
   if (points.length) sections.push(points.map(point => `• ${point}`).join('\n'));
   if (caveat) sections.push(caveat);
   return { summary: sections.join('\n\n'), title: title || null };
+}
+
+function formatQuickSummary(data) {
+  return formatGroundedSummary(data, 3);
+}
+
+function formatDetailedSummary(data) {
+  return formatGroundedSummary(data, 12);
 }
 
 function formatSourceNotes(data) {
@@ -104,10 +113,10 @@ function parseSummaryModelOutput(content) {
   return JSON.parse(json);
 }
 
-function summarySystemPrompt(targetLanguage, mode = 'standard', sourceWasTruncated = false) {
-  const coverageInstruction = mode === 'long'
-    ? 'This is a long source. Cover the distinct material themes across the whole source, rather than repeating its opening topic. Preserve important qualifications, disagreements, conditions, and stated counterpoints. Write a 2-3 sentence overview and 4-6 key points.'
-    : 'Write a natural 1-3 sentence overview and 2-6 concise factual points.';
+function summarySystemPrompt(targetLanguage, mode = 'quick', sourceWasTruncated = false) {
+  const coverageInstruction = mode === 'detailed'
+    ? 'Create detailed study or research notes from the entire supplied source. Cover distinct themes in their source order and preserve important definitions, names, conditions, evidence, steps, standards, and stated limitations. Write a 3-5 sentence overview and 8-12 concise factual points. Each point must add distinct information; do not repeat the overview.'
+    : 'Create a quick orientation: write one concise natural-language overview and 2-3 factual points covering only the most important information.';
   const caveatInstruction = sourceWasTruncated
     ? 'The source was truncated for length, so state only the material uncertainty in caveat.'
     : 'The full source was available, so return an empty caveat.';
@@ -1656,8 +1665,10 @@ export default {
       // A single bounded request stays within the beta Groq account's TPM
       // allowance. The older multi-chunk flow could turn one long PDF into
       // several large requests and fail half way through.
+      const modeSourceLimit = mode === 'quick' ? MAX_QUICK_SUMMARY_SOURCE_CHARS : MAX_MODE_SUMMARY_SOURCE_CHARS;
+      const normalizedPageText = normalizedSummarySource(pageText);
       const sourcePlan = mode === 'quick' || mode === 'detailed'
-        ? { sourceText: normalizedSummarySource(pageText).slice(0, MAX_MODE_SUMMARY_SOURCE_CHARS), chunks: null, wasTruncated: normalizedSummarySource(pageText).length > MAX_MODE_SUMMARY_SOURCE_CHARS }
+        ? { sourceText: normalizedPageText.slice(0, modeSourceLimit), chunks: null, wasTruncated: normalizedPageText.length > modeSourceLimit }
         : prepareSummarySourcePlan(pageText);
       const sourceText = sourcePlan.sourceText;
       const sourceTitle = String(pageTitle || '').replace(/\s+/g, ' ').trim().slice(0, 500);
@@ -1714,8 +1725,10 @@ export default {
             env,
             user,
             quota.periodKey,
-            summarySystemPrompt(targetLanguage, mode === 'detailed' ? 'long' : 'standard', sourcePlan.wasTruncated),
-            `<source-title>\n${sourceTitle}\n</source-title>\n<source>\n${sourceText}\n</source>`
+            summarySystemPrompt(targetLanguage, mode, sourcePlan.wasTruncated),
+            `<source-title>\n${sourceTitle}\n</source-title>\n<source>\n${sourceText}\n</source>`,
+            mode === 'detailed' ? 1800 : 900,
+            mode === 'detailed' ? formatDetailedSummary : formatQuickSummary
           );
           if (result.structuredSummary) {
             summary = result.structuredSummary.summary;
