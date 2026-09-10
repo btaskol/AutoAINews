@@ -17,10 +17,18 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+function isRestrictedPageUrl(url = "") {
+  return url.startsWith("chrome://")
+    || url.startsWith("edge://")
+    || url.startsWith("about:")
+    || url.startsWith("https://chromewebstore.google.com/")
+    || url.startsWith("https://chrome.google.com/webstore/");
+}
+
 function clearCardFromAllTabs() {
   chrome.tabs.query({}, (tabs) => {
     tabs.forEach((tab) => {
-      if (tab?.id && !tab.url?.startsWith("chrome://") && !tab.url?.startsWith("edge://") && !tab.url?.startsWith("about:")) {
+      if (tab?.id && !isRestrictedPageUrl(tab.url)) {
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => {
@@ -236,7 +244,7 @@ chrome.action.onClicked.addListener((tab) => injectModal(tab, false));
 chrome.contextMenus.onClicked.addListener((info, tab) => injectModal(tab, true, info.selectionText));
 
 function injectModal(tab, isSelection, selectedText = "") {
-  if (!tab?.id || tab.url?.startsWith("chrome://") || tab.url?.startsWith("edge://") || tab.url?.startsWith("about:")) return;
+  if (!tab?.id || isRestrictedPageUrl(tab.url)) return;
 
   chrome.storage.local.get(["user", "sessionToken", "summaryLanguage"], async (res) => {
     const currentUser = (res.sessionToken && res.user) ? res.user : null;
