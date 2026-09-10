@@ -1,5 +1,10 @@
+import * as pdfjsLib from "./lib/pdf.min.mjs";
+
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 const API_BASE = "https://dev.brieflykeep.com";
+const MAX_PDF_TEXT_CHARS = 120000;
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.mjs");
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -23,6 +28,58 @@ function isRestrictedPageUrl(url = "") {
     || url.startsWith("about:")
     || url.startsWith("https://chromewebstore.google.com/")
     || url.startsWith("https://chrome.google.com/webstore/");
+}
+
+function isPdfUrl(url = "") {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith(".pdf");
+  } catch {
+    return false;
+  }
+}
+
+async function extractPdfText(url) {
+  let response;
+  try {
+    response = await fetch(url, { credentials: "include", cache: "no-store" });
+  } catch {
+    throw new Error("Brief could not download this PDF. Check your connection and try again.");
+  }
+
+  if (!response.ok) throw new Error(`Brief could not download this PDF (${response.status}).`);
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const header = String.fromCharCode(...bytes.slice(0, 5));
+  if (header !== "%PDF-") {
+    throw new Error("Brief could not access the original PDF. It may require a separate download or sign-in.");
+  }
+
+  let document;
+  try {
+    document = await pdfjsLib.getDocument({ data: bytes }).promise;
+    const parts = [];
+    let characterCount = 0;
+    let truncated = false;
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((item) => item.str + (item.hasEOL ? "\n" : " ")).join("").replace(/[ \t]+\n/g, "\n").trim();
+      if (!pageText) continue;
+      const remaining = MAX_PDF_TEXT_CHARS - characterCount;
+      if (remaining <= 0) { truncated = true; break; }
+      if (pageText.length > remaining) { parts.push(pageText.slice(0, remaining)); characterCount += remaining; truncated = true; break; }
+      parts.push(pageText);
+      characterCount += pageText.length;
+    }
+    const text = parts.join("\n\n").trim();
+    if (!text) throw new Error("No selectable text was found in this PDF. It may be a scanned image or protected document.");
+    return { text, pageCount: document.numPages, truncated };
+  } catch (error) {
+    if (error?.message?.startsWith("No selectable text")) throw error;
+    throw new Error("Brief could not read this PDF. It may be password-protected or use an unsupported format.");
+  } finally {
+    await document?.destroy?.();
+  }
 }
 
 function clearCardFromAllTabs() {
@@ -219,7 +276,22 @@ function injectModal(tab, isSelection, selectedText = "") {
     let textToUse = selectedText;
     let finalIsSelection = isSelection;
 
-    if (!isSelection) {
+    let documentKind = "page";
+    let sourceError = "";
+    let pageCount = 0;
+    let textWasTruncated = false;
+    if (!isSelection && isPdfUrl(tab.url)) {
+      documentKind = "PDF";
+      try {
+        const extracted = await extractPdfText(tab.url);
+        textToUse = extracted.text;
+        pageCount = extracted.pageCount;
+        textWasTruncated = extracted.truncated;
+      } catch (error) {
+        textToUse = "";
+        sourceError = error?.message || "Brief could not read this PDF.";
+      }
+    } else if (!isSelection) {
       let results;
       try {
         results = await chrome.scripting.executeScript({
@@ -247,7 +319,11 @@ function injectModal(tab, isSelection, selectedText = "") {
         wordCount: textToUse ? textToUse.trim().split(/\s+/).length : 0,
         pageText: textToUse,
         isSelection: finalIsSelection,
-        summaryLanguage: res.summaryLanguage || "auto"
+        summaryLanguage: res.summaryLanguage || "auto",
+        documentKind,
+        pageCount,
+        textWasTruncated,
+        sourceError
       }]
     }).catch(() => {});
   });
@@ -353,13 +429,11 @@ function renderUI(context) {
       <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;font-weight:600;color:#111827;">${escapeHtml(context.title)}</div>
       <div style="display:flex;justify-content:space-between;color:#6b7280;">
         <span>${escapeHtml(context.user.email)}</span>
-        <span>~${context.wordCount} words</span>
+        <span>${context.documentKind === "PDF" && context.pageCount ? `${context.pageCount} pages · ` : ""}~${context.wordCount} words</span>
       </div>
     </div>
     <div id="ai-body">
-      <label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label>
-      <select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select>
-      <button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Summarize</button>
+      ${context.sourceError ? `<div style="color:#dc2626;font-size:12px;line-height:1.5;">${escapeHtml(context.sourceError)}</div><div style="color:#6b7280;font-size:12px;line-height:1.5;margin-top:8px;">Brief supports text-based PDFs. A scanned PDF needs OCR before it can be summarized.</div>` : `${context.textWasTruncated ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;line-height:1.4;margin-bottom:10px;">This PDF is long, so Brief will summarize the first part of its selectable text.</div>` : ""}<label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label><select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select><button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">${context.documentKind === "PDF" ? "Summarize PDF" : "Summarize"}</button>`}
     </div>
   `;
   document.body.appendChild(card);
@@ -377,7 +451,10 @@ function renderUI(context) {
     chrome.runtime.sendMessage({ action: "LOGOUT_USER" }, () => card.remove());
   };
 
-  document.getElementById("ai-sum-btn").onclick = () => {
+  const summarizeButton = document.getElementById("ai-sum-btn");
+  if (!summarizeButton) return;
+
+  summarizeButton.onclick = () => {
     const summaryLanguage = document.getElementById("ai-language").value;
     chrome.storage.local.set({ summaryLanguage });
     const body = document.getElementById("ai-body");
