@@ -1,10 +1,5 @@
-import * as pdfjsLib from "./lib/pdf.min.mjs";
-
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 const API_BASE = "https://beta.brieflykeep.com";
-const MAX_PDF_TEXT_CHARS = 120000;
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.mjs");
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -38,6 +33,20 @@ function isPdfUrl(url = "") {
   }
 }
 
+async function ensurePdfParserDocument() {
+  const parserUrl = chrome.runtime.getURL("pdf-parser.html");
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [parserUrl]
+  });
+  if (contexts.length) return;
+  await chrome.offscreen.createDocument({
+    url: "pdf-parser.html",
+    reasons: ["DOM_PARSER"],
+    justification: "Extract selectable text from a PDF the user chose to summarize."
+  });
+}
+
 async function extractPdfText(url) {
   let response;
   try {
@@ -56,48 +65,18 @@ async function extractPdfText(url) {
     throw new Error("Brief could not access the original PDF. It may require a separate download or sign-in.");
   }
 
-  let document;
+  await ensurePdfParserDocument();
   try {
-    document = await pdfjsLib.getDocument({ data: bytes }).promise;
-    const parts = [];
-    let characterCount = 0;
-    let truncated = false;
-
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const pageText = content.items
-        .map((item) => item.str + (item.hasEOL ? "\n" : " "))
-        .join("")
-        .replace(/[ \t]+\n/g, "\n")
-        .trim();
-
-      if (!pageText) continue;
-      const remaining = MAX_PDF_TEXT_CHARS - characterCount;
-      if (remaining <= 0) {
-        truncated = true;
-        break;
-      }
-      if (pageText.length > remaining) {
-        parts.push(pageText.slice(0, remaining));
-        characterCount += remaining;
-        truncated = true;
-        break;
-      }
-      parts.push(pageText);
-      characterCount += pageText.length;
-    }
-
-    const text = parts.join("\n\n").trim();
-    if (!text) {
-      throw new Error("No selectable text was found in this PDF. It may be a scanned image or protected document.");
-    }
-    return { text, pageCount: document.numPages, truncated };
+    const parsed = await chrome.runtime.sendMessage({
+      action: "EXTRACT_PDF_TEXT",
+      bytes: Array.from(bytes)
+    });
+    if (parsed?.error) throw new Error(parsed.error);
+    if (!parsed?.text) throw new Error("No selectable text was found in this PDF. It may be a scanned image or protected document.");
+    return parsed;
   } catch (error) {
     if (error?.message?.startsWith("No selectable text")) throw error;
     throw new Error("Brief could not read this PDF. It may be password-protected or use an unsupported format.");
-  } finally {
-    await document?.destroy?.();
   }
 }
 

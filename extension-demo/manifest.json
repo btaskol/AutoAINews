@@ -8,7 +8,8 @@
     "scripting",
     "storage",
     "contextMenus",
-    "identity"
+    "identity",
+    "offscreen"
   ],
   "host_permissions": [
     "https://brieflykeep.com/*"
