@@ -1137,7 +1137,19 @@ export default {
             .resource-link { font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 500; }
             .resource-link:hover { text-decoration: underline; }
             .empty-state { text-align: center; padding: 48px 20px; color: var(--text-muted); background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
-            @media (max-width: 560px) { .tag-filter { display: block; } .tag-filter-label { display: block; line-height: 1; margin-bottom: 8px; } }
+            @media (max-width: 560px) {
+              body { padding: 24px 16px; }
+              header { align-items: stretch; flex-direction: column; gap: 12px; }
+              .header-actions { flex-wrap: wrap; gap: 8px; width: 100%; }
+              .profile-dropdown { flex: 1 1 180px; max-width: 100%; min-width: 0; }
+              #profBtn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+              .dropdown-menu { max-width: 100%; width: 100%; }
+              .card { padding: 16px; }
+              .card-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+              .card-meta { flex-wrap: wrap; gap: 10px; }
+              .tag-filter { display: block; }
+              .tag-filter-label { display: block; line-height: 1; margin-bottom: 8px; }
+            }
           </style>
         </head>
         <body>

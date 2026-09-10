@@ -525,11 +525,13 @@ function renderUI(context) {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
+          <button id="ai-change-options" style="width:100%;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;margin-bottom:8px;">Change summary options</button>
           <input type="text" id="ai-tag" placeholder="Tag / Custom Title (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
           <textarea id="ai-comment" rows="2" placeholder="Note (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;margin-bottom:10px;"></textarea>
           <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save Capture</button>
           <div id="ai-save-status" style="font-size:12px;text-align:center;margin-top:8px;"></div>
         `;
+        document.getElementById("ai-change-options").onclick = () => renderUI(context);
         document.getElementById("ai-save-btn").onclick = () => {
           const statusDiv = document.getElementById("ai-save-status");
           statusDiv.style.color = "#6b7280";

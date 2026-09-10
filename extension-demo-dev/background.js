@@ -185,7 +185,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           body: JSON.stringify(request.data || {
             pageText: request.pageText,
             pageTitle: request.pageTitle,
-            summaryLanguage: request.summaryLanguage
+            summaryLanguage: request.summaryLanguage,
+            summaryMode: request.summaryMode,
+            sourceSections: request.sourceSections
           })
         });
 
@@ -256,7 +258,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => injectModal(tab, true, 
 function injectModal(tab, isSelection, selectedText = "") {
   if (!tab?.id || isRestrictedPageUrl(tab.url)) return;
 
-  chrome.storage.local.get(["user", "sessionToken", "summaryLanguage"], async (res) => {
+  chrome.storage.local.get(["user", "sessionToken", "summaryLanguage", "summaryMode"], async (res) => {
     const currentUser = (res.sessionToken && res.user) ? res.user : null;
 
     let textToUse = selectedText;
@@ -266,6 +268,7 @@ function injectModal(tab, isSelection, selectedText = "") {
     let sourceError = "";
     let pageCount = 0;
     let textWasTruncated = false;
+    let sourceSections = [];
     if (!isSelection && isPdfUrl(tab.url)) {
       documentKind = "PDF";
       try {
@@ -273,6 +276,7 @@ function injectModal(tab, isSelection, selectedText = "") {
         textToUse = extracted.text;
         pageCount = extracted.pageCount;
         textWasTruncated = extracted.truncated;
+        sourceSections = extracted.sections || [];
       } catch (error) {
         textToUse = "";
         sourceError = error?.message || "Brief could not read this PDF.";
@@ -306,9 +310,11 @@ function injectModal(tab, isSelection, selectedText = "") {
         pageText: textToUse,
         isSelection: finalIsSelection,
         summaryLanguage: res.summaryLanguage || "auto",
+        summaryMode: res.summaryMode || "quick",
         documentKind,
         pageCount,
         textWasTruncated,
+        sourceSections,
         sourceError
       }]
     }).catch(() => {});
@@ -334,6 +340,17 @@ function renderUI(context) {
     : "auto";
   const languageOptions = summaryLanguages.map(([value, label]) =>
     `<option value="${value}"${value === selectedSummaryLanguage ? " selected" : ""}>${label}</option>`
+  ).join("");
+  const summaryModes = [
+    ["quick", "Quick brief — main takeaway"],
+    ["detailed", "Detailed notes — more context"],
+    ["source_notes", "Notes by page/section — beta"]
+  ];
+  const selectedSummaryMode = summaryModes.some(([value]) => value === context.summaryMode)
+    ? context.summaryMode
+    : "quick";
+  const summaryModeOptions = summaryModes.map(([value, label]) =>
+    `<option value="${value}"${value === selectedSummaryMode ? " selected" : ""}>${label}</option>`
   ).join("");
   const showProductPrompt = (prompt) => {
     const body = document.getElementById("ai-body");
@@ -419,7 +436,7 @@ function renderUI(context) {
       </div>
     </div>
     <div id="ai-body">
-      ${context.sourceError ? `<div style="color:#dc2626;font-size:12px;line-height:1.5;">${escapeHtml(context.sourceError)}</div><div style="color:#6b7280;font-size:12px;line-height:1.5;margin-top:8px;">Brief supports text-based PDFs. A scanned PDF needs OCR before it can be summarized.</div>` : `${context.textWasTruncated ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;line-height:1.4;margin-bottom:10px;">This PDF is long, so Brief will summarize the first part of its selectable text.</div>` : ""}<label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label><select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select><button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">${context.documentKind === "PDF" ? "Summarize PDF" : "Summarize"}</button>`}
+      ${context.sourceError ? `<div style="color:#dc2626;font-size:12px;line-height:1.5;">${escapeHtml(context.sourceError)}</div><div style="color:#6b7280;font-size:12px;line-height:1.5;margin-top:8px;">Brief supports text-based PDFs. A scanned PDF needs OCR before it can be summarized.</div>` : `${context.textWasTruncated ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;line-height:1.4;margin-bottom:10px;">This PDF is long, so Brief will summarize the first part of its selectable text.</div>` : ""}<label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label><select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select><label for="ai-summary-mode" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">What do you need?</label><select id="ai-summary-mode" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:6px;">${summaryModeOptions}</select><div style="color:#6b7280;font-size:11px;line-height:1.4;margin-bottom:10px;">Page notes use PDF pages; web pages are split into readable sections.</div><button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">${context.documentKind === "PDF" ? "Summarize PDF" : "Summarize"}</button>`}
     </div>
   `;
   document.body.appendChild(card);
@@ -442,18 +459,21 @@ function renderUI(context) {
 
   summarizeButton.onclick = () => {
     const summaryLanguage = document.getElementById("ai-language").value;
-    chrome.storage.local.set({ summaryLanguage });
+    const summaryMode = document.getElementById("ai-summary-mode").value;
+    chrome.storage.local.set({ summaryLanguage, summaryMode });
     const body = document.getElementById("ai-body");
     body.innerHTML = `<div style="color:#6b7280;font-size:12px;padding:8px 0;">Generating summary...</div>`;
-    chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, pageTitle: context.title, summaryLanguage }, (data) => {
+    chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, pageTitle: context.title, summaryLanguage, summaryMode, sourceSections: context.sourceSections }, (data) => {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
+          <button id="ai-change-options" style="width:100%;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;margin-bottom:8px;">Change summary options</button>
           <input type="text" id="ai-tag" placeholder="Tag / Custom Title (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
           <textarea id="ai-comment" rows="2" placeholder="Note (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;margin-bottom:10px;"></textarea>
           <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save Capture</button>
           <div id="ai-save-status" style="font-size:12px;text-align:center;margin-top:8px;"></div>
         `;
+        document.getElementById("ai-change-options").onclick = () => renderUI(context);
         document.getElementById("ai-save-btn").onclick = () => {
           const statusDiv = document.getElementById("ai-save-status");
           statusDiv.style.color = "#6b7280";
