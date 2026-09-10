@@ -1147,8 +1147,9 @@ export default {
               .card { padding: 16px; }
               .card-header { align-items: flex-start; flex-direction: column; gap: 10px; }
               .card-meta { flex-wrap: wrap; gap: 10px; }
-              .tag-filter { display: block; }
-              .tag-filter-label { display: block; line-height: 1; margin-bottom: 8px; }
+              .tag-filter { align-items: center; display: grid; gap: 8px; grid-template-columns: 26px minmax(0, 1fr) 26px; }
+              .tag-filter-label { grid-column: 1 / -1; line-height: 1; margin-bottom: 2px; }
+              .tag-chips { grid-column: 2; min-width: 0; }
             }
           </style>
         </head>
