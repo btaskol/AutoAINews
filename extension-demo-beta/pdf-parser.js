@@ -8,6 +8,7 @@ async function parsePdfText(bytes) {
   try {
     document = await pdfjsLib.getDocument({ data: bytes }).promise;
     const parts = [];
+    const sections = [];
     let characterCount = 0;
     let truncated = false;
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -17,13 +18,20 @@ async function parsePdfText(bytes) {
       if (!pageText) continue;
       const remaining = MAX_PDF_TEXT_CHARS - characterCount;
       if (remaining <= 0) { truncated = true; break; }
-      if (pageText.length > remaining) { parts.push(pageText.slice(0, remaining)); truncated = true; break; }
+      if (pageText.length > remaining) {
+        const partialText = pageText.slice(0, remaining);
+        parts.push(partialText);
+        sections.push({ label: `Page ${pageNumber}`, text: partialText });
+        truncated = true;
+        break;
+      }
       parts.push(pageText);
+      sections.push({ label: `Page ${pageNumber}`, text: pageText });
       characterCount += pageText.length;
     }
     const text = parts.join("\n\n").trim();
     if (!text) return { error: "No selectable text was found in this PDF. It may be a scanned image or protected document." };
-    return { text, pageCount: document.numPages, truncated };
+    return { text, sections, pageCount: document.numPages, truncated };
   } catch {
     return { error: "Brief could not read this PDF. It may be password-protected or use an unsupported format." };
   } finally {
