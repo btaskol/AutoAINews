@@ -11,7 +11,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "summarize-selection",
-      title: "Summarize Selection with Brief",
+      title: "Brief: summarize selected text",
       contexts: ["selection"]
     });
   });
@@ -435,6 +435,7 @@ function renderUI(context) {
         <span>${context.documentKind === "PDF" && context.pageCount ? `${context.pageCount} pages · ` : ""}~${context.wordCount} words</span>
       </div>
     </div>
+    ${context.documentKind === "PDF" && !context.isSelection ? `<div style="color:#6b7280;font-size:11px;line-height:1.4;margin:-6px 0 12px;">To summarize highlighted PDF text, right-click the selection and choose “Brief: summarize selected text”.</div>` : ""}
     <div id="ai-body">
       ${context.sourceError ? `<div style="color:#dc2626;font-size:12px;line-height:1.5;">${escapeHtml(context.sourceError)}</div><div style="color:#6b7280;font-size:12px;line-height:1.5;margin-top:8px;">Brief supports text-based PDFs. A scanned PDF needs OCR before it can be summarized.</div>` : `${context.textWasTruncated ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;line-height:1.4;margin-bottom:10px;">This PDF is long, so Brief will summarize the first part of its selectable text.</div>` : ""}<label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label><select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select><label for="ai-summary-mode" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">What do you need?</label><select id="ai-summary-mode" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:6px;">${summaryModeOptions}</select><div style="color:#6b7280;font-size:11px;line-height:1.4;margin-bottom:10px;">Page notes use PDF pages; web pages are split into readable sections.</div><button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">${context.documentKind === "PDF" ? "Summarize PDF" : "Summarize"}</button>`}
     </div>

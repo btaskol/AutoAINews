@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Brief Dev",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Development-only build of Brief for testing unreleased Worker changes.",
   "permissions": [
     "activeTab",
@@ -19,7 +19,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Summarize Page (Dev)",
+    "default_title": "Brief: summarize full page (Dev)",
     "default_icon": {
       "16": "icon16.png",
       "48": "icon48.png",
