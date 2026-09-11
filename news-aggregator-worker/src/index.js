@@ -1190,6 +1190,7 @@ export default {
             .btn-share { background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; padding: 6px 10px; }
             .btn-share:hover { background: var(--sub-bg); }
             .share-menu { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; bottom: calc(100% + 6px); box-shadow: 0 10px 24px rgba(15, 23, 42, .16); display: grid; left: 0; min-width: 120px; overflow: hidden; position: absolute; z-index: 3; }
+            .share-menu[hidden] { display: none; }
             .share-menu button { background: transparent; border: 0; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; padding: 9px 11px; text-align: left; }
             .share-menu button:hover { background: var(--sub-bg); }
             .dashboard-footer { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 14px; justify-content: center; margin: 28px 0 4px; }
