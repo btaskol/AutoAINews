@@ -245,12 +245,19 @@ async function nextProductPrompt(env, user) {
 
 function containsActionableHarmfulInstructions(text) {
   // Reporting on a cyberattack, violence, or sexual content is allowed. This
-  // only catches material that appears to provide executable instructions for
-  // harm, credential theft, exploitation, weapons, or sexual abuse.
+  // only catches material with strong signs of executable instructions for
+  // harm, credential theft, exploitation, weapons, or sexual abuse. A broad
+  // keyword such as "exploit" plus "how to" would incorrectly block news.
   const lower = text.toLowerCase();
   const harmfulSubject = /(malware|ransomware|exploit|ddos|phishing|credential theft|keylogger|weapon|bomb|sexual abuse|csam)/;
-  const instructionalSignal = /(step[- ]by[- ]step|tutorial|instructions?|how to|payload|curl\s|powershell|bash\s|python\s|```|copy and paste|bypass)/;
-  return harmfulSubject.test(lower) && instructionalSignal.test(lower);
+  if (!harmfulSubject.test(lower)) return false;
+
+  const codeBlock = /```[\s\S]{1,2000}?```/.test(text);
+  const explicitExecutionPrompt = /\b(copy and paste|run this|execute this|save (?:the|this) script|bypass (?:the|a)|use this payload)\b/.test(lower);
+  const shellCommands = text.match(/(?:^|\n)\s*(?:curl|wget|powershell|bash|python(?:3)?|msfconsole|nmap|sqlmap)\b/gim) || [];
+  const orderedSteps = text.match(/(?:^|\n)\s*(?:step\s*\d+|\d+[.)])\s+/gim) || [];
+
+  return (codeBlock && explicitExecutionPrompt) || (shellCommands.length >= 2 && orderedSteps.length >= 2);
 }
 
 function freeSummaryLimit(env) {
