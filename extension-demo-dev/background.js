@@ -285,16 +285,33 @@ function injectModal(tab, isSelection, selectedText = "") {
       let results;
       try {
         results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
+          // A page can place readable content in an iframe. Check all frames
+          // and prefer an actual selection from any of them before using the
+          // document text as the full-page capture.
+          target: { tabId: tab.id, allFrames: true },
           func: () => {
-            const sel = window.getSelection().toString().trim();
-            return sel ? { isSelection: true, text: sel } : { isSelection: false, text: document.body.innerText };
+            const selectedPageText = window.getSelection?.().toString().trim() || "";
+            const activeElement = document.activeElement;
+            const isTextField = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement;
+            const selectedFieldText = isTextField
+              && typeof activeElement.selectionStart === "number"
+              && typeof activeElement.selectionEnd === "number"
+              && activeElement.selectionEnd > activeElement.selectionStart
+              ? activeElement.value.slice(activeElement.selectionStart, activeElement.selectionEnd).trim()
+              : "";
+            const selection = selectedPageText || selectedFieldText;
+            return selection
+              ? { isSelection: true, text: selection }
+              : { isSelection: false, text: document.body.innerText || "" };
           }
         });
       } catch {
         return;
       }
-      const payload = results?.[0]?.result || { isSelection: false, text: "" };
+      const payloads = results?.map(result => result?.result).filter(Boolean) || [];
+      const payload = payloads.find(result => result.isSelection)
+        || payloads.find(result => result.text)
+        || { isSelection: false, text: "" };
       textToUse = payload.text;
       finalIsSelection = payload.isSelection;
     }
