@@ -468,13 +468,26 @@ function renderUI(context) {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
-          <button id="ai-change-options" style="width:100%;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;margin-bottom:8px;">Change summary options</button>
-          <input type="text" id="ai-tag" placeholder="Tag / Custom Title (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
-          <textarea id="ai-comment" rows="2" placeholder="Note (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;margin-bottom:10px;"></textarea>
-          <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save Capture</button>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button id="ai-copy-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Copy summary</button>
+            <button id="ai-change-options" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Change options</button>
+          </div>
+          <details style="margin:0 0 10px;"><summary style="color:#6b7280;cursor:pointer;font-size:12px;">Add a tag or note (optional)</summary><div style="padding-top:8px;"><input type="text" id="ai-tag" placeholder="Tag / Custom Title" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;"><textarea id="ai-comment" rows="2" placeholder="Note" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;"></textarea></div></details>
+          <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save to library</button>
+          <button id="ai-discard-btn" style="width:100%;padding:7px;background:none;color:#6b7280;border:none;font-weight:500;cursor:pointer;font-size:12px;margin-top:4px;">Close without saving</button>
           <div id="ai-save-status" style="font-size:12px;text-align:center;margin-top:8px;"></div>
         `;
         document.getElementById("ai-change-options").onclick = () => renderUI(context);
+        document.getElementById("ai-discard-btn").onclick = () => card.remove();
+        document.getElementById("ai-copy-btn").onclick = async () => {
+          const copyButton = document.getElementById("ai-copy-btn");
+          try {
+            await navigator.clipboard.writeText(data.summary);
+            copyButton.innerText = "Copied";
+          } catch {
+            copyButton.innerText = "Copy unavailable";
+          }
+        };
         document.getElementById("ai-save-btn").onclick = () => {
           const statusDiv = document.getElementById("ai-save-status");
           statusDiv.style.color = "#6b7280";
