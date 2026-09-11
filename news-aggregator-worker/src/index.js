@@ -1025,7 +1025,7 @@ export default {
         </div>` : '';
 
       const cardsHtml = results.length > 0 ? results.map(s => `
-        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-created="${escapeHtml(s.created_at || '')}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}" data-collection="${s.collection_id || ''}">
+        <div id="card-${s.id}" class="card" data-pinned="${s.is_pinned ? 'true' : 'false'}" data-created="${escapeHtml(s.created_at || '')}" data-tags="${(tagsBySummary.get(s.id) || []).map(tag => tag.id).join(',')}" data-collection="${s.collection_id || ''}" data-share-title="${escapeHtml(s.title)}" data-share-summary="${escapeHtml(s.summary)}" data-share-url="${escapeHtml(s.url)}">
           <div class="card-header">
             <div class="card-context">
               <span class="card-source">${escapeHtml(sourceLabelForUrl(s.url))}</span>
@@ -1066,6 +1066,14 @@ export default {
           </div>
 
           <div class="card-footer">
+            <div class="share-wrap">
+              <button type="button" class="btn-share" onclick="shareBrief('${s.id}')">Share</button>
+              <div id="share-menu-${s.id}" class="share-menu" hidden>
+                <button type="button" onclick="shareBriefVia('${s.id}', 'whatsapp')">WhatsApp</button>
+                <button type="button" onclick="shareBriefVia('${s.id}', 'email')">Email</button>
+                <button type="button" onclick="shareBriefVia('${s.id}', 'copy')">Copy</button>
+              </div>
+            </div>
             <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer" class="resource-link">Visit Source ↗</a>
           </div>
         </div>
@@ -1177,7 +1185,13 @@ export default {
             .btn-expand { background: none; border: none; color: var(--accent); font-size: 12px; font-weight: 500; cursor: pointer; margin-top: 6px; padding: 0; }
             .btn-expand:hover { text-decoration: underline; }
             .card-note { font-size: 12px; color: var(--note-text); margin-top: 10px; background: var(--note-bg); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--note-border); }
-            .card-footer { margin-top: 14px; display: flex; justify-content: flex-end; }
+            .card-footer { align-items: center; display: flex; justify-content: space-between; margin-top: 14px; }
+            .share-wrap { position: relative; }
+            .btn-share { background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; padding: 6px 10px; }
+            .btn-share:hover { background: var(--sub-bg); }
+            .share-menu { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; bottom: calc(100% + 6px); box-shadow: 0 10px 24px rgba(15, 23, 42, .16); display: grid; left: 0; min-width: 120px; overflow: hidden; position: absolute; z-index: 3; }
+            .share-menu button { background: transparent; border: 0; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; padding: 9px 11px; text-align: left; }
+            .share-menu button:hover { background: var(--sub-bg); }
             .dashboard-footer { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 14px; justify-content: center; margin: 28px 0 4px; }
             .dashboard-footer a { color: var(--text-muted); text-decoration: none; }
             .dashboard-footer a:hover { color: var(--accent); text-decoration: underline; }
@@ -1380,6 +1394,71 @@ export default {
               }
             }
 
+            function shareData(id) {
+              const card = document.getElementById('card-' + id);
+              const title = card?.dataset.shareTitle || 'Brief';
+              const summary = card?.dataset.shareSummary || '';
+              const url = card?.dataset.shareUrl || '';
+              return {
+                title,
+                url,
+                text: [title, summary, url ? 'Source: ' + url : ''].filter(Boolean).join('\n\n')
+              };
+            }
+
+            function closeShareMenus() {
+              document.querySelectorAll('.share-menu').forEach(menu => { menu.hidden = true; });
+            }
+
+            async function copyShareText(id) {
+              const { text } = shareData(id);
+              try {
+                await navigator.clipboard.writeText(text);
+              } catch {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                textarea.remove();
+              }
+              const button = document.querySelector('#card-' + id + ' .btn-share');
+              if (button) {
+                const label = button.innerText;
+                button.innerText = 'Copied';
+                setTimeout(() => { button.innerText = label; }, 1400);
+              }
+            }
+
+            async function shareBrief(id) {
+              const { title, text, url } = shareData(id);
+              if (navigator.share) {
+                try {
+                  await navigator.share({ title, text, url });
+                  return;
+                } catch (error) {
+                  if (error?.name === 'AbortError') return;
+                }
+              }
+              const menu = document.getElementById('share-menu-' + id);
+              const isOpen = !menu.hidden;
+              closeShareMenus();
+              menu.hidden = isOpen;
+            }
+
+            async function shareBriefVia(id, method) {
+              const { title, text } = shareData(id);
+              closeShareMenus();
+              if (method === 'copy') return copyShareText(id);
+              if (method === 'email') {
+                window.location.href = 'mailto:?subject=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(text);
+                return;
+              }
+              window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener,noreferrer');
+            }
+
             window.addEventListener('DOMContentLoaded', initExpandButtons);
 
             const searchInput = document.getElementById('searchInput');
@@ -1453,7 +1532,10 @@ export default {
               e.stopPropagation();
               profMenu.classList.toggle('show');
             };
-            document.onclick = () => profMenu.classList.remove('show');
+            document.onclick = (event) => {
+              profMenu.classList.remove('show');
+              if (!event.target.closest('.share-wrap')) closeShareMenus();
+            };
 
             document.getElementById('logoutBtn').onclick = () => {
               localStorage.removeItem('sessionToken');
