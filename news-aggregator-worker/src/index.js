@@ -1403,7 +1403,7 @@ export default {
               return {
                 title,
                 url,
-                text: [title, summary, url ? 'Source: ' + url : ''].filter(Boolean).join('\n\n')
+                text: [title, summary, url ? 'Source: ' + url : ''].filter(Boolean).join('\\n\\n')
               };
             }
 
