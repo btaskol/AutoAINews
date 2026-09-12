@@ -556,6 +556,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
       <meta charset="utf-8">
       <title>Brief — Sign In</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
+      <script>if (window.location.hash.includes('id_token=')) document.documentElement.classList.add('auth-callback');</script>
       <style>
         :root { --bg: #fcfcfc; --card-bg: #ffffff; --text: #111827; --text-muted: #6b7280; --border: #e5e7eb; --sub-bg: #f3f4f6; }
         [data-theme="dark"] { --bg: #0f172a; --card-bg: #1e293b; --text: #f8fafc; --text-muted: #94a3b8; --border: #334155; --sub-bg: #1e293b; }
@@ -584,6 +585,10 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         .support-note a:hover { color: #2563eb; text-decoration: underline; }
         .beta-pill { background: #eff6ff; border-radius: 999px; color: #1d4ed8; display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .03em; margin: 0; padding: 4px 9px; text-transform: uppercase; }
         .beta-description { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; color: #1d4ed8; font-size: 13px; margin: 0 auto 24px; max-width: 520px; padding: 10px 14px; }
+        .auth-callback .login-card { display: grid; min-height: 180px; place-items: center; }
+        .auth-callback .login-card > :not(#statusMsg) { display: none; }
+        .auth-callback .login-card #statusMsg { background: transparent; display: block !important; font-size: 15px; margin: 0; }
+        .auth-callback .login-card #statusMsg:empty::before { content: 'Signing in…'; }
         @media (max-width: 560px) { .login-card { padding: 32px 20px 24px; } }
       </style>
     </head>
@@ -641,6 +646,11 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         if (window.location.hash.includes('id_token=')) {
           statusMsg.innerText = "Signing in...";
           statusMsg.style.display = "block";
+          function showAuthFailure(text) {
+            document.documentElement.classList.remove('auth-callback');
+            statusMsg.innerText = text;
+            statusMsg.style.display = "block";
+          }
           const params = new URLSearchParams(window.location.hash.substring(1));
           const idToken = params.get('id_token');
           if (idToken) {
@@ -655,12 +665,12 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
                 localStorage.setItem('sessionToken', data.sessionToken);
                 window.location.href = dashboardUrlWithToken(data.sessionToken);
               } else {
-                statusMsg.innerText = "Authentication failed: " + (data.error || "Please try again.");
+                showAuthFailure("Authentication failed: " + (data.error || "Please try again."));
                 localStorage.removeItem('sessionToken');
               }
             })
             .catch(err => {
-              statusMsg.innerText = "Connection error: " + err.message;
+              showAuthFailure("Connection error: " + err.message);
               localStorage.removeItem('sessionToken');
             });
           }
