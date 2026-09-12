@@ -379,12 +379,6 @@ function renderUI(context) {
     uk: "Джерело", ar: "المصدر", ja: "出典", ko: "출처", zh: "来源", hi: "स्रोत"
   };
   const pageLanguage = String(document.documentElement.lang || "").toLowerCase().split("-")[0];
-  // When someone explicitly chooses an output language, every piece of the
-  // shared message should use it. Only automatic summaries inherit the page.
-  const shareLanguage = selectedSummaryLanguage === "auto" ? pageLanguage : selectedSummaryLanguage;
-  const shareSourceLabel = sourceLabels[shareLanguage]
-    || sourceLabels[pageLanguage]
-    || "Source";
   const showProductPrompt = (prompt) => {
     const body = document.getElementById("ai-body");
     if (!body || !prompt?.type) return;
@@ -510,7 +504,7 @@ function renderUI(context) {
             <button id="ai-system-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">System</button>
             <button id="ai-whatsapp-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">WhatsApp</button>
             <button id="ai-email-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Email</button>
-            <div style="grid-column:1 / -1;color:#6b7280;font-size:11px;line-height:1.4;padding-top:2px;">Shares include an unlisted Brief link so recipients can save a copy.</div>
+            <div id="ai-share-note" style="grid-column:1 / -1;color:#6b7280;font-size:11px;line-height:1.4;padding-top:2px;"></div>
           </div>
           <details style="margin:0 0 10px;"><summary style="color:#6b7280;cursor:pointer;font-size:12px;">Add a tag or note (optional)</summary><div style="padding-top:8px;"><input type="text" id="ai-tag" placeholder="Tag / Custom Title" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;"><textarea id="ai-comment" rows="2" placeholder="Note" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;"></textarea></div></details>
           <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save to library</button>
@@ -519,8 +513,12 @@ function renderUI(context) {
         `;
         document.getElementById("ai-change-options").onclick = () => renderUI(context);
         document.getElementById("ai-discard-btn").onclick = () => card.remove();
+        // Use the language selected for this request, not the language that
+        // happened to be selected when the card was first opened.
+        const generatedShareLanguage = summaryLanguage === "auto" ? pageLanguage : summaryLanguage;
+        const generatedSourceLabel = sourceLabels[generatedShareLanguage] || sourceLabels[pageLanguage] || "Source";
         const shareTitle = data.title || context.title || "Brief summary";
-        const shareText = [shareTitle, data.summary, context.url ? `${shareSourceLabel}: ${context.url}` : ""].filter(Boolean).join("\n\n");
+        const shareText = [shareTitle, data.summary, context.url ? `${generatedSourceLabel}: ${context.url}` : ""].filter(Boolean).join("\n\n");
         const shareFooters = {
           tr: "Brief ile özetlendi · Brief’e kaydet:", es: "Resumido con Brief · Guarda una copia en Brief:",
           de: "Mit Brief zusammengefasst · In Brief speichern:", fr: "Résumé avec Brief · Enregistrer dans Brief :",
@@ -531,7 +529,25 @@ function renderUI(context) {
           ko: "Brief로 요약됨 · Brief에 사본 저장:", zh: "由 Brief 总结 · 保存到 Brief:",
           hi: "Brief द्वारा सारांशित · Brief में कॉपी सहेजें:"
         };
-        const shareFooter = shareFooters[shareLanguage] || "Summarized with Brief · Save a copy:";
+        const shareFooter = shareFooters[generatedShareLanguage] || "Summarized with Brief · Save a copy:";
+        const shareNotes = {
+          tr: "Paylaşımlar, alıcıların bir kopyayı kaydedebilmesi için listelenmemiş bir Brief bağlantısı içerir.",
+          es: "Las comparticiones incluyen un enlace no listado de Brief para que los destinatarios puedan guardar una copia.",
+          de: "Geteilte Inhalte enthalten einen nicht gelisteten Brief-Link, damit Empfänger eine Kopie speichern können.",
+          fr: "Les partages incluent un lien Brief non répertorié pour que les destinataires puissent enregistrer une copie.",
+          it: "Le condivisioni includono un link Brief non in elenco per consentire ai destinatari di salvare una copia.",
+          pt: "Os compartilhamentos incluem um link não listado do Brief para que os destinatários possam salvar uma cópia.",
+          nl: "Gedeelde items bevatten een niet-vermelde Brief-link zodat ontvangers een kopie kunnen opslaan.",
+          pl: "Udostępnienia zawierają niepubliczny link Brief, aby odbiorcy mogli zapisać kopię.",
+          ru: "В публикации есть непубличная ссылка Brief, чтобы получатели могли сохранить копию.",
+          uk: "Поширення містять непублічне посилання Brief, щоб одержувачі могли зберегти копію.",
+          ar: "تتضمن المشاركات رابط Brief غير مدرج ليتمكن المستلمون من حفظ نسخة.",
+          ja: "共有には、受信者がコピーを保存できる未公開の Brief リンクが含まれます。",
+          ko: "공유에는 수신자가 사본을 저장할 수 있도록 비공개 Brief 링크가 포함됩니다.",
+          zh: "分享内容包含一个未公开的 Brief 链接，收件人可以保存副本。",
+          hi: "शेयर में एक असूचीबद्ध Brief लिंक शामिल है ताकि प्राप्तकर्ता एक कॉपी सहेज सकें।"
+        };
+        document.getElementById("ai-share-note").innerText = shareNotes[generatedShareLanguage] || "Shares include an unlisted Brief link so recipients can save a copy.";
         const shareOptions = document.getElementById("ai-share-options");
         document.getElementById("ai-share-btn").onclick = () => {
           shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
