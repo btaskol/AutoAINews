@@ -31,6 +31,7 @@ For every idea: make the smallest testable version in development, test it with 
 | Feedback loop | “I have an idea or issue.” | Optional feedback link in the dashboard/extension; keep the existing five-capture rating prompt. | Quality and repetition of feedback themes. |
 | Team feedback workflow | “Someone else should help process customer feedback.” | Use the existing `Feedback reviewer` role; test it with one trusted helper. | Reviewer can work independently without Cloudflare access. |
 | Persistent Chrome side panel | “I want Brief available while I move between tabs.” | Test an opt-in Chrome side panel that follows the active tab and uses its selected text or page context; retain the current toolbar and right-click flows. | Panel-open rate, captures per panel session, and whether users return to it after switching tabs. |
+| Interface-language preference | “I want Brief’s dashboard and extension controls in my own language, separately from the language of each summary.” | Add the same supported-language list to a dashboard and extension **Interface language** setting; localize the sign-in, capture, dashboard, save, and share flows first. | People select and keep a preferred interface language without reducing successful captures, saves, or shares. |
 
 ## Later — only if demand proves it
 
