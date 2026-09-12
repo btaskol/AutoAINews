@@ -379,8 +379,11 @@ function renderUI(context) {
     uk: "Джерело", ar: "المصدر", ja: "出典", ko: "출처", zh: "来源", hi: "स्रोत"
   };
   const pageLanguage = String(document.documentElement.lang || "").toLowerCase().split("-")[0];
-  const shareSourceLabel = sourceLabels[pageLanguage]
-    || sourceLabels[selectedSummaryLanguage]
+  // When someone explicitly chooses an output language, every piece of the
+  // shared message should use it. Only automatic summaries inherit the page.
+  const shareLanguage = selectedSummaryLanguage === "auto" ? pageLanguage : selectedSummaryLanguage;
+  const shareSourceLabel = sourceLabels[shareLanguage]
+    || sourceLabels[pageLanguage]
     || "Source";
   const showProductPrompt = (prompt) => {
     const body = document.getElementById("ai-body");
@@ -527,7 +530,7 @@ function renderUI(context) {
           ko: "Brief로 요약됨 · Brief에 사본 저장:", zh: "由 Brief 总结 · 保存到 Brief:",
           hi: "Brief द्वारा सारांशित · Brief में कॉपी सहेजें:"
         };
-        const shareFooter = shareFooters[pageLanguage] || shareFooters[selectedSummaryLanguage] || "Summarized with Brief · Save a copy:";
+        const shareFooter = shareFooters[shareLanguage] || "Summarized with Brief · Save a copy:";
         const shareOptions = document.getElementById("ai-share-options");
         document.getElementById("ai-share-btn").onclick = () => {
           shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
