@@ -487,7 +487,13 @@ function renderUI(context) {
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
           <div style="display:flex;gap:8px;margin-bottom:8px;">
             <button id="ai-copy-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Copy summary</button>
+            <button id="ai-share-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Share</button>
             <button id="ai-change-options" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Change options</button>
+          </div>
+          <div id="ai-share-options" style="display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
+            <button id="ai-system-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">System</button>
+            <button id="ai-whatsapp-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">WhatsApp</button>
+            <button id="ai-email-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Email</button>
           </div>
           <details style="margin:0 0 10px;"><summary style="color:#6b7280;cursor:pointer;font-size:12px;">Add a tag or note (optional)</summary><div style="padding-top:8px;"><input type="text" id="ai-tag" placeholder="Tag / Custom Title" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;"><textarea id="ai-comment" rows="2" placeholder="Note" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;"></textarea></div></details>
           <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save to library</button>
@@ -496,6 +502,29 @@ function renderUI(context) {
         `;
         document.getElementById("ai-change-options").onclick = () => renderUI(context);
         document.getElementById("ai-discard-btn").onclick = () => card.remove();
+        const shareTitle = data.title || context.title || "Brief summary";
+        const shareText = [shareTitle, data.summary, context.url ? `Source: ${context.url}` : ""].filter(Boolean).join("\n\n");
+        const shareOptions = document.getElementById("ai-share-options");
+        document.getElementById("ai-share-btn").onclick = () => {
+          shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
+        };
+        document.getElementById("ai-system-share").onclick = async () => {
+          if (!navigator.share) {
+            alert("System sharing is not available here. Choose WhatsApp, Email, or Copy instead.");
+            return;
+          }
+          try {
+            await navigator.share({ title: shareTitle, text: shareText, url: context.url || undefined });
+          } catch (error) {
+            if (error?.name !== "AbortError") alert("Could not open system sharing. Please try another option.");
+          }
+        };
+        document.getElementById("ai-whatsapp-share").onclick = () => {
+          window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, "_blank", "noopener,noreferrer");
+        };
+        document.getElementById("ai-email-share").onclick = () => {
+          window.location.href = `mailto:?subject=${encodeURIComponent(shareTitle)}&body=${encodeURIComponent(shareText)}`;
+        };
         document.getElementById("ai-copy-btn").onclick = async () => {
           const copyButton = document.getElementById("ai-copy-btn");
           try {
