@@ -36,7 +36,15 @@ function safeDashboardReturnPath(value) {
 }
 
 function isPublicShareToken(value) {
-  return /^[a-f0-9]{32}$/i.test(String(value || ''));
+  // Keep existing UUID-style links valid while using shorter, still
+  // unguessable links for new shares (72 bits of randomness).
+  return /^(?:[a-f0-9]{32}|[A-Za-z0-9_-]{12})$/.test(String(value || ''));
+}
+
+function createPublicShareToken() {
+  const bytes = new Uint8Array(9);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 function normalizePublicShareUrl(value) {
@@ -1142,7 +1150,6 @@ export default {
             <div class="share-wrap">
               <button type="button" class="btn-share" onclick="shareBrief('${s.id}')">Share</button>
               <div id="share-menu-${s.id}" class="share-menu" hidden>
-                <button type="button" onclick="shareBriefVia('${s.id}', 'brief-link')">Share with Brief link</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'system')">System share</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'whatsapp')">WhatsApp</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'email')">Email</button>
@@ -1492,8 +1499,7 @@ export default {
               document.querySelectorAll('.share-menu').forEach(menu => { menu.hidden = true; });
             }
 
-            async function copyShareText(id) {
-              const { text } = shareData(id);
+            async function copyText(text) {
               try {
                 await navigator.clipboard.writeText(text);
               } catch {
@@ -1506,6 +1512,11 @@ export default {
                 document.execCommand('copy');
                 textarea.remove();
               }
+            }
+
+            async function copyShareText(id) {
+              const { text } = await shareTextWithBrief(id);
+              await copyText(text);
               const button = document.querySelector('#card-' + id + ' .btn-share');
               if (button) {
                 const label = button.innerText;
@@ -1521,37 +1532,41 @@ export default {
               menu.hidden = isOpen;
             }
 
+            async function shareTextWithBrief(id) {
+              const { title, url, text } = shareData(id);
+              if (!localStorage.getItem('brief-share-link-consent')) {
+                const include = confirm('To let recipients save this Brief, Brief will create an unlisted public link containing this title, summary, and source. OK includes the link. Cancel shares normally without it.');
+                if (!include) return { title, text };
+                localStorage.setItem('brief-share-link-consent', 'true');
+              }
+              const response = await fetch('/api/share-links', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${token}' },
+                body: JSON.stringify({ title, summary: document.getElementById('card-' + id)?.dataset.shareSummary || '', sourceUrl: url })
+              });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(data.error || 'Could not create a Brief share link.');
+              return { title, text: [text, 'Summarized with Brief · Save a copy: ' + data.url].filter(Boolean).join('\\n\\n') };
+            }
+
             async function shareBriefVia(id, method) {
-              const { title, text, url } = shareData(id);
               closeShareMenus();
-              if (method === 'brief-link') {
-                try {
-                  const response = await fetch('/api/share-links', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${token}' },
-                    body: JSON.stringify({ title, summary: document.getElementById('card-' + id)?.dataset.shareSummary || '', sourceUrl: url })
-                  });
-                  const data = await response.json().catch(() => ({}));
-                  if (!response.ok) throw new Error(data.error || 'Could not create a Brief link.');
-                  const publicText = [title, document.getElementById('card-' + id)?.dataset.shareSummary || '', url ? 'Source: ' + url : '', 'Save this Brief: ' + data.url].filter(Boolean).join('\\n\\n');
-                  if (navigator.share) {
-                    try { await navigator.share({ title, text: publicText, url: data.url }); return; } catch (error) { if (error?.name === 'AbortError') return; }
-                  }
-                  await navigator.clipboard.writeText(data.url);
-                  alert('Brief link copied. Anyone with it can view this summary and save it to their own Brief.');
-                } catch (error) {
-                  alert(error.message || 'Could not create a Brief link.');
-                }
+              if (method === 'copy') return copyShareText(id);
+              let share;
+              try {
+                share = await shareTextWithBrief(id);
+              } catch (error) {
+                alert(error.message || 'Could not prepare this share.');
                 return;
               }
-              if (method === 'copy') return copyShareText(id);
+              const { title, text } = share;
               if (method === 'system') {
                 if (!navigator.share) {
                   alert('System sharing is not available in this browser. Choose WhatsApp, Email, or Copy instead.');
                   return;
                 }
                 try {
-                  await navigator.share({ title, text, url });
+                  await navigator.share({ title, text });
                 } catch (error) {
                   if (error?.name !== 'AbortError') alert('Could not open system sharing. Please try another option.');
                 }

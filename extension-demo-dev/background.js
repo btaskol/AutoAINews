@@ -503,8 +503,7 @@ function renderUI(context) {
             <button id="ai-share-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Share</button>
             <button id="ai-change-options" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Change options</button>
           </div>
-          <div id="ai-share-options" style="display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
-            <button id="ai-brief-link-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Brief link</button>
+          <div id="ai-share-options" style="display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
             <button id="ai-system-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">System</button>
             <button id="ai-whatsapp-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">WhatsApp</button>
             <button id="ai-email-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Email</button>
@@ -518,71 +517,58 @@ function renderUI(context) {
         document.getElementById("ai-discard-btn").onclick = () => card.remove();
         const shareTitle = data.title || context.title || "Brief summary";
         const shareText = [shareTitle, data.summary, context.url ? `${shareSourceLabel}: ${context.url}` : ""].filter(Boolean).join("\n\n");
+        const shareFooters = {
+          tr: "Brief ile özetlendi · Brief’e kaydet:", es: "Resumido con Brief · Guarda una copia en Brief:",
+          de: "Mit Brief zusammengefasst · In Brief speichern:", fr: "Résumé avec Brief · Enregistrer dans Brief :",
+          it: "Riassunto con Brief · Salva una copia in Brief:", pt: "Resumido com Brief · Salvar uma cópia no Brief:",
+          nl: "Samengevat met Brief · Bewaar een kopie in Brief:", pl: "Podsumowano z Brief · Zapisz kopię w Brief:",
+          ru: "Кратко с Brief · Сохранить копию в Brief:", uk: "Підсумовано з Brief · Зберегти копію в Brief:",
+          ar: "تم التلخيص باستخدام Brief · احفظ نسخة في Brief:", ja: "Brief で要約 · Brief に保存:",
+          ko: "Brief로 요약됨 · Brief에 사본 저장:", zh: "由 Brief 总结 · 保存到 Brief:",
+          hi: "Brief द्वारा सारांशित · Brief में कॉपी सहेजें:"
+        };
+        const shareFooter = shareFooters[pageLanguage] || shareFooters[selectedSummaryLanguage] || "Summarized with Brief · Save a copy:";
         const shareOptions = document.getElementById("ai-share-options");
         document.getElementById("ai-share-btn").onclick = () => {
           shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
         };
-        document.getElementById("ai-brief-link-share").onclick = () => {
-          const button = document.getElementById("ai-brief-link-share");
-          const resetBriefLinkButton = () => {
-            button.style.background = "#ffffff";
-            button.style.color = "#374151";
-            button.style.borderColor = "#d1d5db";
-            button.style.fontWeight = "500";
-          };
-          button.disabled = true;
-          button.style.background = "#eff6ff";
-          button.style.color = "#1d4ed8";
-          button.style.borderColor = "#bfdbfe";
-          button.innerText = "Creating…";
-          chrome.runtime.sendMessage({ action: "CREATE_SHARE_LINK", data: { title: shareTitle, summary: data.summary, sourceUrl: context.url } }, async (res) => {
-            button.disabled = false;
-            if (!res?.success || !res?.url) {
-              button.innerText = "Brief link";
-              resetBriefLinkButton();
-              alert(res?.error || "Could not create a Brief link.");
-              return;
+        const shareTextWithBrief = () => new Promise((resolve, reject) => {
+          chrome.storage.local.get(["briefShareLinkConsent"], (stored) => {
+            if (!stored.briefShareLinkConsent) {
+              const include = confirm("To let recipients save this Brief, Brief will create an unlisted public link containing this title, summary, and source. OK includes the link. Cancel shares normally without it.");
+              if (!include) return resolve(shareText);
+              chrome.storage.local.set({ briefShareLinkConsent: true });
             }
-            const publicText = [shareTitle, data.summary, context.url ? `${shareSourceLabel}: ${context.url}` : "", `Save this Brief: ${res.url}`].filter(Boolean).join("\n\n");
-            if (navigator.share) {
-              try {
-                await navigator.share({ title: shareTitle, text: publicText, url: res.url });
-                button.innerText = "Shared";
-                return;
-              } catch (error) {
-                if (error?.name === "AbortError") {
-                  button.innerText = "Brief link";
-                  resetBriefLinkButton();
-                  return;
-                }
-              }
-            }
-            try {
-              await navigator.clipboard.writeText(res.url);
-              button.innerText = "Link copied";
-            } catch {
-              button.innerText = "Brief link";
-              resetBriefLinkButton();
-              alert(`Brief link: ${res.url}`);
-            }
+            chrome.runtime.sendMessage({ action: "CREATE_SHARE_LINK", data: { title: shareTitle, summary: data.summary, sourceUrl: context.url } }, (res) => {
+              if (!res?.success || !res?.url) return reject(new Error(res?.error || "Could not create a Brief share link."));
+              resolve([shareText, `${shareFooter} ${res.url}`].filter(Boolean).join("\n\n"));
+            });
           });
-        };
+        });
         document.getElementById("ai-system-share").onclick = async () => {
           if (!navigator.share) {
             alert("System sharing is not available here. Choose WhatsApp, Email, or Copy instead.");
             return;
           }
           try {
-            await navigator.share({ title: shareTitle, text: shareText, url: context.url || undefined });
+            await navigator.share({ title: shareTitle, text: await shareTextWithBrief() });
           } catch (error) {
             if (error?.name !== "AbortError") alert("Could not open system sharing. Please try another option.");
           }
         };
-        document.getElementById("ai-whatsapp-share").onclick = () => {
-          window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, "_blank", "noopener,noreferrer");
+        document.getElementById("ai-whatsapp-share").onclick = async () => {
+          try {
+            window.open(`https://wa.me/?text=${encodeURIComponent(await shareTextWithBrief())}`, "_blank", "noopener,noreferrer");
+          } catch (error) {
+            alert(error.message || "Could not prepare this share.");
+          }
         };
-        document.getElementById("ai-email-share").onclick = () => {
-          window.location.href = `mailto:?subject=${encodeURIComponent(shareTitle)}&body=${encodeURIComponent(shareText)}`;
+        document.getElementById("ai-email-share").onclick = async () => {
+          try {
+            window.location.href = `mailto:?subject=${encodeURIComponent(shareTitle)}&body=${encodeURIComponent(await shareTextWithBrief())}`;
+          } catch (error) {
+            alert(error.message || "Could not prepare this share.");
+          }
         };
         document.getElementById("ai-copy-btn").onclick = async () => {
           const copyButton = document.getElementById("ai-copy-btn");
