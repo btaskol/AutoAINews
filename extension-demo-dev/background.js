@@ -168,7 +168,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (["FETCH_SUMMARY", "SAVE_DASHBOARD"].includes(request.action)) {
+  if (["FETCH_SUMMARY", "SAVE_DASHBOARD", "CREATE_SHARE_LINK"].includes(request.action)) {
     chrome.storage.local.get(["sessionToken"], async (res) => {
       const token = res.sessionToken;
       if (!token) {
@@ -178,7 +178,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${token}` };
       try {
-        let endpoint = request.action === "SAVE_DASHBOARD" ? "save-dashboard" : "extension-capture";
+        let endpoint = request.action === "SAVE_DASHBOARD"
+          ? "save-dashboard"
+          : request.action === "CREATE_SHARE_LINK"
+            ? "share-links"
+            : "extension-capture";
         const response = await fetch(`${API_BASE}/api/${endpoint}`, {
           method: "POST",
           headers,
@@ -499,7 +503,8 @@ function renderUI(context) {
             <button id="ai-share-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Share</button>
             <button id="ai-change-options" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Change options</button>
           </div>
-          <div id="ai-share-options" style="display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
+          <div id="ai-share-options" style="display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
+            <button id="ai-brief-link-share" style="padding:7px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;font-weight:600;cursor:pointer;font-size:11px;">Brief link</button>
             <button id="ai-system-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">System</button>
             <button id="ai-whatsapp-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">WhatsApp</button>
             <button id="ai-email-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Email</button>
@@ -516,6 +521,39 @@ function renderUI(context) {
         const shareOptions = document.getElementById("ai-share-options");
         document.getElementById("ai-share-btn").onclick = () => {
           shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
+        };
+        document.getElementById("ai-brief-link-share").onclick = () => {
+          const button = document.getElementById("ai-brief-link-share");
+          button.disabled = true;
+          button.innerText = "Creating…";
+          chrome.runtime.sendMessage({ action: "CREATE_SHARE_LINK", data: { title: shareTitle, summary: data.summary, sourceUrl: context.url } }, async (res) => {
+            button.disabled = false;
+            if (!res?.success || !res?.url) {
+              button.innerText = "Brief link";
+              alert(res?.error || "Could not create a Brief link.");
+              return;
+            }
+            const publicText = [shareTitle, data.summary, context.url ? `${shareSourceLabel}: ${context.url}` : "", `Save this Brief: ${res.url}`].filter(Boolean).join("\n\n");
+            if (navigator.share) {
+              try {
+                await navigator.share({ title: shareTitle, text: publicText, url: res.url });
+                button.innerText = "Shared";
+                return;
+              } catch (error) {
+                if (error?.name === "AbortError") {
+                  button.innerText = "Brief link";
+                  return;
+                }
+              }
+            }
+            try {
+              await navigator.clipboard.writeText(res.url);
+              button.innerText = "Link copied";
+            } catch {
+              button.innerText = "Brief link";
+              alert(`Brief link: ${res.url}`);
+            }
+          });
         };
         document.getElementById("ai-system-share").onclick = async () => {
           if (!navigator.share) {

@@ -20,6 +20,35 @@ const MAX_SOURCE_NOTE_POINTS_PER_SECTION = 3;
 const DEFAULT_FREE_SUMMARY_LIMIT = 10;
 const PRO_MONTHLY_SUMMARY_LIMIT = 250;
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
+const PUBLIC_SHARE_TITLE_MAX = 500;
+const PUBLIC_SHARE_SUMMARY_MAX = 30000;
+const PUBLIC_SHARE_URL_MAX = 2000;
+
+function safeDashboardReturnPath(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate.startsWith('/dashboard')) return '/dashboard';
+  try {
+    const parsed = new URL(candidate, 'https://brief.invalid');
+    return parsed.pathname === '/dashboard' ? `${parsed.pathname}${parsed.search}` : '/dashboard';
+  } catch {
+    return '/dashboard';
+  }
+}
+
+function isPublicShareToken(value) {
+  return /^[a-f0-9]{32}$/i.test(String(value || ''));
+}
+
+function normalizePublicShareUrl(value) {
+  const candidate = String(value || '').trim().slice(0, PUBLIC_SHARE_URL_MAX);
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+  } catch {
+    return '';
+  }
+}
 
 function normalizedSummarySource(value) {
   return String(value || '')
@@ -481,7 +510,7 @@ async function seedTagDemo(env, user) {
   await env.DB.prepare("UPDATE summaries SET is_pinned = 1 WHERE user_id = ? AND title = '[Test] AI product briefing'").bind(user.id).run();
 }
 
-function renderMinimalAuthPage(origin, message = "", clearStorage = false, chromeWebStoreUrl = "", env = {}) {
+function renderMinimalAuthPage(origin, message = "", clearStorage = false, chromeWebStoreUrl = "", env = {}, returnPath = '/dashboard') {
   const installUrl = String(chromeWebStoreUrl || '').trim();
   const hasChromeWebStoreLink = /^https:\/\/chromewebstore\.google\.com\/.+/.test(installUrl);
   const isBeta = env.APP_STAGE === 'beta';
@@ -491,6 +520,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
   googleAuthUrl.searchParams.set("redirect_uri", `${origin}/dashboard`);
   googleAuthUrl.searchParams.set("scope", "openid email profile");
   googleAuthUrl.searchParams.set("nonce", Math.random().toString(36).substring(2));
+  googleAuthUrl.searchParams.set("state", btoa(JSON.stringify({ returnPath: safeDashboardReturnPath(returnPath) })));
 
   return `
     <!DOCTYPE html>
@@ -566,6 +596,21 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
 
         const statusMsg = document.getElementById('statusMsg');
 
+        function returnPathFromState() {
+          try {
+            const state = new URLSearchParams(window.location.hash.substring(1)).get('state');
+            const value = state ? JSON.parse(atob(state)).returnPath : '/dashboard';
+            return String(value || '').startsWith('/dashboard') ? value : '/dashboard';
+          } catch {
+            return '/dashboard';
+          }
+        }
+
+        function dashboardUrlWithToken(token) {
+          const target = returnPathFromState();
+          return target + (target.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+        }
+
         if (window.location.hash.includes('id_token=')) {
           statusMsg.innerText = "Signing in...";
           statusMsg.style.display = "block";
@@ -581,7 +626,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
             .then(data => {
               if (data.success && data.sessionToken) {
                 localStorage.setItem('sessionToken', data.sessionToken);
-                window.location.href = '/dashboard?token=' + data.sessionToken;
+                window.location.href = dashboardUrlWithToken(data.sessionToken);
               } else {
                 statusMsg.innerText = "Authentication failed: " + (data.error || "Please try again.");
                 localStorage.removeItem('sessionToken');
@@ -595,13 +640,22 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         } else {
           const savedToken = localStorage.getItem('sessionToken');
           if (savedToken && !window.location.search.includes('token')) {
-            window.location.href = '/dashboard?token=' + savedToken;
+            const target = ${JSON.stringify(safeDashboardReturnPath(returnPath))};
+            window.location.href = target + (target.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(savedToken);
           }
         }
       </script>
     </body>
     </html>
   `;
+}
+
+function renderPublicSharePage(origin, share) {
+  const title = escapeHtml(share.title || 'Shared Brief');
+  const summary = escapeHtml(share.summary || '').replace(/\n/g, '<br>');
+  const sourceUrl = normalizePublicShareUrl(share.source_url);
+  const saveUrl = `/dashboard?share=${encodeURIComponent(share.token)}`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${title} — Shared with Brief</title><style>:root{--bg:#fcfcfc;--card:#fff;--text:#111827;--muted:#6b7280;--border:#e5e7eb;--accent:#2563eb}*{box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;line-height:1.55;margin:0;padding:32px 18px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:10px;margin-bottom:24px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:30px;justify-content:center;width:30px}.brand{font-weight:700}.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px}h1{font-size:28px;letter-spacing:-.025em;line-height:1.18;margin:0 0 8px}.notice{color:var(--muted);font-size:13px;margin:0 0 24px}.summary{border-top:1px solid var(--border);font-size:16px;padding-top:22px;white-space:normal}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}.button{background:#111827;border-radius:8px;color:#fff;font-size:14px;font-weight:600;padding:10px 14px;text-decoration:none}.source{background:#fff;border:1px solid var(--border);color:var(--accent)}.fine{color:var(--muted);font-size:12px;margin:18px 0 0}@media(max-width:560px){body{padding:22px 14px}.card{padding:22px 18px}h1{font-size:24px}}</style></head><body><main class="wrap"><header class="top"><div class="mark">B</div><div class="brand">Brief</div></header><article class="card"><h1>${title}</h1><p class="notice">Shared with Brief · Anyone with this link can view this summary.</p><div class="summary">${summary}</div><div class="actions"><a class="button" href="${saveUrl}">Save this to my Brief</a>${sourceUrl ? `<a class="button source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original source ↗</a>` : ''}</div><p class="fine">Saving creates a copy in your own private Brief library. You will be asked to sign in if needed.</p></article></main></body></html>`;
 }
 
 function renderLegalPage(origin, page) {
@@ -719,6 +773,14 @@ export default {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders }
       });
+    }
+
+    if (url.pathname.startsWith('/s/') && req.method === 'GET') {
+      const token = url.pathname.slice(3);
+      if (!isPublicShareToken(token)) return new Response('Not found', { status: 404 });
+      const share = await env.DB.prepare('SELECT token, title, summary, source_url FROM public_share_links WHERE token = ?').bind(token).first();
+      if (!share) return new Response('This shared Brief is unavailable.', { status: 404, headers: htmlHeaders });
+      return new Response(renderPublicSharePage(origin, share), { headers: { ...htmlHeaders, 'X-Robots-Tag': 'noindex, nofollow, noarchive' } });
     }
 
     if (url.pathname === "/" && req.method === "GET") {
@@ -953,7 +1015,7 @@ export default {
       }
 
       if (!user) {
-        return new Response(renderMinimalAuthPage(origin, "", false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
+        return new Response(renderMinimalAuthPage(origin, "", false, env.CHROME_WEB_STORE_URL, env, safeDashboardReturnPath(`/dashboard${url.search}`)), { headers: htmlHeaders });
       }
 
       await touchUserActivity(env, user);
@@ -962,6 +1024,17 @@ export default {
       const trialInfo = calculateTrial(user, trialRecord);
 
       await seedTagDemo(env, user);
+
+      const sharedToken = url.searchParams.get('share');
+      const sharedBrief = isPublicShareToken(sharedToken)
+        ? await env.DB.prepare('SELECT token, title, summary, source_url FROM public_share_links WHERE token = ?').bind(sharedToken).first()
+        : null;
+      const sharedBriefHtml = sharedBrief ? `
+        <section class="shared-brief" id="sharedBrief" data-share-token="${escapeHtml(sharedBrief.token)}">
+          <div><strong>Shared with you</strong><p>${escapeHtml(sharedBrief.title)}</p></div>
+          <button type="button" id="saveSharedBrief">Save to my Brief</button>
+          <p class="shared-brief-status" id="sharedBriefStatus" role="status"></p>
+        </section>` : '';
 
       const { results } = await env.DB.prepare(
         "SELECT * FROM summaries WHERE user_id = ? ORDER BY is_pinned DESC, created_at DESC"
@@ -1069,6 +1142,7 @@ export default {
             <div class="share-wrap">
               <button type="button" class="btn-share" onclick="shareBrief('${s.id}')">Share</button>
               <div id="share-menu-${s.id}" class="share-menu" hidden>
+                <button type="button" onclick="shareBriefVia('${s.id}', 'brief-link')">Share with Brief link</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'system')">System share</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'whatsapp')">WhatsApp</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'email')">Email</button>
@@ -1127,6 +1201,11 @@ export default {
             .onboarding-pending { font-size: 12px !important; font-style: italic; margin: 0 !important; }
             .onboarding-dismiss { background: none; border: 0; color: var(--text-muted); cursor: pointer; font-size: 22px; line-height: 1; padding: 8px; position: absolute; right: 8px; top: 8px; }
             .onboarding-dismiss:hover { color: var(--text); }
+            .shared-brief { align-items:center; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; display:flex; flex-wrap:wrap; gap:10px 14px; justify-content:space-between; margin:0 0 20px; padding:14px; }
+            .shared-brief strong { color:#1d4ed8; font-size:13px; }
+            .shared-brief p { margin:2px 0 0; }
+            .shared-brief button { background:#111827; border:0; border-radius:6px; color:#fff; cursor:pointer; font:inherit; font-size:13px; font-weight:600; padding:8px 11px; }
+            .shared-brief-status { color:#047857; flex-basis:100%; font-size:12px; margin:0 !important; }
             .search-container { margin-bottom: 24px; }
             .search-input { width: 100%; padding: 10px 14px; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s ease; }
             .search-input:focus { border-color: var(--accent); }
@@ -1274,6 +1353,7 @@ export default {
           <div class="search-container">
             <input type="text" id="searchInput" class="search-input" placeholder="Search briefs, tags, or notes...">
           </div>
+          ${sharedBriefHtml}
           ${extensionOnboardingHtml}
           ${tagFiltersHtml}
           <datalist id="existing-tags">${tagSuggestionsHtml}</datalist>
@@ -1444,6 +1524,26 @@ export default {
             async function shareBriefVia(id, method) {
               const { title, text, url } = shareData(id);
               closeShareMenus();
+              if (method === 'brief-link') {
+                try {
+                  const response = await fetch('/api/share-links', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${token}' },
+                    body: JSON.stringify({ title, summary: document.getElementById('card-' + id)?.dataset.shareSummary || '', sourceUrl: url })
+                  });
+                  const data = await response.json().catch(() => ({}));
+                  if (!response.ok) throw new Error(data.error || 'Could not create a Brief link.');
+                  const publicText = [title, document.getElementById('card-' + id)?.dataset.shareSummary || '', url ? 'Source: ' + url : '', 'Save this Brief: ' + data.url].filter(Boolean).join('\\n\\n');
+                  if (navigator.share) {
+                    try { await navigator.share({ title, text: publicText, url: data.url }); return; } catch (error) { if (error?.name === 'AbortError') return; }
+                  }
+                  await navigator.clipboard.writeText(data.url);
+                  alert('Brief link copied. Anyone with it can view this summary and save it to their own Brief.');
+                } catch (error) {
+                  alert(error.message || 'Could not create a Brief link.');
+                }
+                return;
+              }
               if (method === 'copy') return copyShareText(id);
               if (method === 'system') {
                 if (!navigator.share) {
@@ -1529,6 +1629,28 @@ export default {
             });
             document.getElementById('tagScrollLeft')?.addEventListener('click', () => tagChips?.scrollBy({ left: -260, behavior: 'smooth' }));
             document.getElementById('tagScrollRight')?.addEventListener('click', () => tagChips?.scrollBy({ left: 260, behavior: 'smooth' }));
+
+            document.getElementById('saveSharedBrief')?.addEventListener('click', async () => {
+              const status = document.getElementById('sharedBriefStatus');
+              const token = document.getElementById('sharedBrief')?.dataset.shareToken;
+              if (!token) return;
+              status.textContent = 'Saving…';
+              try {
+                const response = await fetch('/api/share-links/save', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${token}' },
+                  body: JSON.stringify({ token })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Could not save this Brief.');
+                status.textContent = data.alreadySaved ? 'Already saved in your Brief.' : 'Saved to your Brief.';
+                document.getElementById('saveSharedBrief').disabled = true;
+                window.history.replaceState({}, document.title, '/dashboard');
+              } catch (error) {
+                status.style.color = '#b91c1c';
+                status.textContent = error.message || 'Could not save this Brief.';
+              }
+            });
 
             const profBtn = document.getElementById('profBtn');
             const profMenu = document.getElementById('profMenu');
@@ -1723,6 +1845,42 @@ export default {
 
     const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
     const trialInfo = calculateTrial(user, trialRecord);
+
+    if (url.pathname === '/api/share-links' && req.method === 'POST') {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const title = String(body?.title || '').replace(/\s+/g, ' ').trim().slice(0, PUBLIC_SHARE_TITLE_MAX);
+        const summary = String(body?.summary || '').trim().slice(0, PUBLIC_SHARE_SUMMARY_MAX);
+        const sourceUrl = normalizePublicShareUrl(body?.sourceUrl);
+        if (!title || !summary || !sourceUrl) {
+          return new Response(JSON.stringify({ error: 'A title, summary, and valid source URL are required to create a share link.' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+        const token = crypto.randomUUID().replace(/-/g, '');
+        await env.DB.prepare('INSERT INTO public_share_links (token, owner_user_id, title, summary, source_url) VALUES (?, ?, ?, ?, ?)')
+          .bind(token, user.id, title, summary, sourceUrl).run();
+        return new Response(JSON.stringify({ success: true, url: `${origin}/s/${token}` }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: 'Could not create the share link.' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      }
+    }
+
+    if (url.pathname === '/api/share-links/save' && req.method === 'POST') {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const token = String(body?.token || '');
+        if (!isPublicShareToken(token)) return new Response(JSON.stringify({ error: 'This share link is invalid.' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        const share = await env.DB.prepare('SELECT token, title, summary, source_url FROM public_share_links WHERE token = ?').bind(token).first();
+        if (!share) return new Response(JSON.stringify({ error: 'This shared Brief is unavailable.' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        const saved = await env.DB.prepare('INSERT OR IGNORE INTO public_share_link_saves (share_token, user_id) VALUES (?, ?)').bind(token, user.id).run();
+        if (saved.meta?.changes) {
+          await env.DB.prepare('INSERT INTO summaries (user_id, title, custom_title, comment, url, summary) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(user.id, share.title, '', '', share.source_url, share.summary).run();
+        }
+        return new Response(JSON.stringify({ success: true, alreadySaved: !saved.meta?.changes }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: 'Could not save this shared Brief.' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      }
+    }
 
     if (url.pathname === "/api/summary/update" && req.method === "POST") {
       try {
