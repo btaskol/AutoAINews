@@ -610,18 +610,28 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
       </div>
 
       <script>
-        if (localStorage.getItem('theme') === 'dark') {
+        function safeStorageGet(key) {
+          try { return localStorage.getItem(key); } catch { return null; }
+        }
+        function safeStorageSet(key, value) {
+          try { localStorage.setItem(key, value); } catch {}
+        }
+        function safeStorageRemove(key) {
+          try { localStorage.removeItem(key); } catch {}
+        }
+
+        if (safeStorageGet('theme') === 'dark') {
           document.documentElement.setAttribute('data-theme', 'dark');
         }
 
-        ${clearStorage ? "localStorage.removeItem('sessionToken');" : ""}
+        ${clearStorage ? "safeStorageRemove('sessionToken');" : ""}
 
         function emitLogout() {
           window.postMessage({ source: 'BRIEF_DASHBOARD', status: 'logged_out' }, window.location.origin);
         }
 
         if (window.location.search.includes('action=logout')) {
-          localStorage.removeItem('sessionToken');
+          safeStorageRemove('sessionToken');
           emitLogout();
           window.history.replaceState({}, document.title, '/dashboard');
         }
@@ -662,20 +672,23 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
             .then(res => res.json())
             .then(data => {
               if (data.success && data.sessionToken) {
-                localStorage.setItem('sessionToken', data.sessionToken);
-                window.location.href = dashboardUrlWithToken(data.sessionToken);
+                // The server has already set a secure cookie. Browser storage is
+                // convenient but must not block the post-Google redirect on a
+                // phone with restricted storage.
+                safeStorageSet('sessionToken', data.sessionToken);
+                window.location.replace(dashboardUrlWithToken(data.sessionToken));
               } else {
                 showAuthFailure("Authentication failed: " + (data.error || "Please try again."));
-                localStorage.removeItem('sessionToken');
+                safeStorageRemove('sessionToken');
               }
             })
             .catch(err => {
               showAuthFailure("Connection error: " + err.message);
-              localStorage.removeItem('sessionToken');
+              safeStorageRemove('sessionToken');
             });
           }
         } else {
-          const savedToken = localStorage.getItem('sessionToken');
+          const savedToken = safeStorageGet('sessionToken');
           if (savedToken && !window.location.search.includes('token')) {
             const target = ${JSON.stringify(safeDashboardReturnPath(returnPath))};
             window.location.href = target + (target.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(savedToken);
@@ -1342,13 +1355,11 @@ export default {
         </head>
         <body>
           <script>
-            if (localStorage.getItem('theme') === 'dark') {
-              document.documentElement.setAttribute('data-theme', 'dark');
-            }
+            try { if (localStorage.getItem('theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch {}
 
             const activeToken = "${token}";
             const isOnboardingPreview = ${isBriefAdmin(user) && url.searchParams.get('preview') === 'extension-onboarding' ? 'true' : 'false'};
-            localStorage.setItem('sessionToken', activeToken);
+            try { localStorage.setItem('sessionToken', activeToken); } catch {}
 
             if (window.location.search.includes('token=')) {
               window.history.replaceState({}, document.title, window.location.pathname);
