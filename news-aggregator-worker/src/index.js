@@ -367,6 +367,13 @@ function briefSessionCookie(token, clear = false) {
     : `brief_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`;
 }
 
+function hasActiveSessionExpiry(value) {
+  const raw = String(value || '').replace(' ', 'T');
+  if (!raw) return false;
+  const timestamp = Date.parse(/[zZ]$/.test(raw) ? raw : `${raw}Z`);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+}
+
 function isBriefAdmin(user) {
   return user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com';
 }
@@ -436,8 +443,20 @@ async function verifyTokenOrSession(authHeader, env) {
   if (!token) return null;
 
   try {
-    const dbUser = await env.DB.prepare(`SELECT * FROM users WHERE session_token = ?`).bind(token).first();
-    if (dbUser && await isEnvironmentAccessAllowed(env, dbUser.email)) return dbUser;
+    const dbUser = await env.DB.prepare(`
+      SELECT users.*, user_sessions.expires_at AS active_session_expires_at
+      FROM user_sessions
+      JOIN users ON users.id = user_sessions.user_id
+      WHERE user_sessions.token = ?
+    `).bind(token).first();
+    if (dbUser && hasActiveSessionExpiry(dbUser.active_session_expires_at) && await isEnvironmentAccessAllowed(env, dbUser.email)) return dbUser;
+  } catch (e) {}
+
+  // Sessions created before the device-session migration remain valid until
+  // their normal expiry. New logins are stored only in user_sessions.
+  try {
+    const legacyUser = await env.DB.prepare(`SELECT * FROM users WHERE session_token = ?`).bind(token).first();
+    if (legacyUser && hasActiveSessionExpiry(legacyUser.session_expires_at) && await isEnvironmentAccessAllowed(env, legacyUser.email)) return legacyUser;
   } catch (e) {}
 
   const googleUser = await verifyGoogleToken(token);
@@ -857,25 +876,19 @@ export default {
           `).bind(googleUser.email).run();
         } catch (e) {}
 
-        try {
-          await env.DB.prepare(`
-            INSERT INTO users (id, email, name, picture, session_token, session_expires_at, last_active_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(id) DO UPDATE SET 
-              email = excluded.email, 
-              name = excluded.name, 
-              picture = excluded.picture,
-              session_token = excluded.session_token,
-              session_expires_at = excluded.session_expires_at,
-              last_active_at = CURRENT_TIMESTAMP
-          `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, appSessionToken, sessionExpiresAt).run();
-        } catch (dbErr) {
-          await env.DB.prepare(`
-            INSERT INTO users (id, email, name, picture, last_active_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, picture = excluded.picture, last_active_at = CURRENT_TIMESTAMP
-          `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
-        }
+        await env.DB.prepare(`
+          INSERT INTO users (id, email, name, picture, last_active_at)
+          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            email = excluded.email,
+            name = excluded.name,
+            picture = excluded.picture,
+            last_active_at = CURRENT_TIMESTAMP
+        `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
+        await env.DB.prepare(`
+          INSERT INTO user_sessions (token, user_id, expires_at)
+          VALUES (?, ?, ?)
+        `).bind(appSessionToken, googleUser.sub, sessionExpiresAt).run();
 
         const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
         const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(googleUser.email).first();
@@ -1017,6 +1030,11 @@ export default {
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
       if (url.searchParams.get("action") === "logout") {
+        const currentSessionToken = sessionTokenFromCookie(req);
+        if (currentSessionToken) {
+          await env.DB.prepare('DELETE FROM user_sessions WHERE token = ?').bind(currentSessionToken).run().catch(() => {});
+          await env.DB.prepare('UPDATE users SET session_token = NULL, session_expires_at = NULL WHERE session_token = ?').bind(currentSessionToken).run().catch(() => {});
+        }
         return new Response(renderMinimalAuthPage(origin, "Signed out successfully.", true, env.CHROME_WEB_STORE_URL, env), { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie('', true) } });
       }
 
@@ -2323,6 +2341,7 @@ export default {
       await env.DB.prepare("DELETE FROM summaries WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM tags WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM collections WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM user_sessions WHERE user_id = ?").bind(user.id).run().catch(() => {});
       await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
