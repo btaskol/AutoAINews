@@ -11,7 +11,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "summarize-selection",
-      title: "Summarize Selection with Brief",
+      title: "Brief: summarize selected text",
       contexts: ["selection"]
     });
   });
@@ -35,16 +35,9 @@ function isPdfUrl(url = "") {
 
 async function ensurePdfParserDocument() {
   const parserUrl = chrome.runtime.getURL("pdf-parser.html");
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ["OFFSCREEN_DOCUMENT"],
-    documentUrls: [parserUrl]
-  });
+  const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [parserUrl] });
   if (contexts.length) return;
-  await chrome.offscreen.createDocument({
-    url: "pdf-parser.html",
-    reasons: ["DOM_PARSER"],
-    justification: "Extract selectable text from a PDF the user chose to summarize."
-  });
+  await chrome.offscreen.createDocument({ url: "pdf-parser.html", reasons: ["DOM_PARSER"], justification: "Extract selectable text from a PDF the user chose to summarize." });
 }
 
 async function extractPdfText(url) {
@@ -55,9 +48,7 @@ async function extractPdfText(url) {
     throw new Error("Brief could not download this PDF. Check your connection and try again.");
   }
 
-  if (!response.ok) {
-    throw new Error(`Brief could not download this PDF (${response.status}).`);
-  }
+  if (!response.ok) throw new Error(`Brief could not download this PDF (${response.status}).`);
 
   const bytes = new Uint8Array(await response.arrayBuffer());
   const header = String.fromCharCode(...bytes.slice(0, 5));
@@ -67,10 +58,7 @@ async function extractPdfText(url) {
 
   await ensurePdfParserDocument();
   try {
-    const parsed = await chrome.runtime.sendMessage({
-      action: "EXTRACT_PDF_TEXT",
-      bytes: Array.from(bytes)
-    });
+    const parsed = await chrome.runtime.sendMessage({ action: "EXTRACT_PDF_TEXT", bytes: Array.from(bytes) });
     if (parsed?.error) throw new Error(parsed.error);
     if (!parsed?.text) throw new Error("No selectable text was found in this PDF. It may be a scanned image or protected document.");
     return parsed;
@@ -162,8 +150,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "LOGIN_GOOGLE") {
-    // Chrome can dismiss an injected panel while an interactive OAuth window is
-    // open. Keep the originating tab so the signed-in panel can be restored.
+    // Keep the originating tab so the signed-in panel can be restored after
+    // Chrome closes the interactive OAuth window.
     const sourceTabId = sender.tab?.id;
     const redirectUrl = chrome.identity.getRedirectURL();
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -213,7 +201,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (["FETCH_SUMMARY", "SAVE_DASHBOARD"].includes(request.action)) {
+  if (["FETCH_SUMMARY", "SAVE_DASHBOARD", "CREATE_SHARE_LINK"].includes(request.action)) {
     chrome.storage.local.get(["sessionToken"], async (res) => {
       const token = res.sessionToken;
       if (!token) {
@@ -223,7 +211,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${token}` };
       try {
-        let endpoint = request.action === "SAVE_DASHBOARD" ? "save-dashboard" : "extension-capture";
+        let endpoint = request.action === "SAVE_DASHBOARD"
+          ? "save-dashboard"
+          : request.action === "CREATE_SHARE_LINK"
+            ? "share-links"
+            : "extension-capture";
         const response = await fetch(`${API_BASE}/api/${endpoint}`, {
           method: "POST",
           headers,
@@ -314,7 +306,6 @@ function injectModal(tab, isSelection, selectedText = "") {
     let pageCount = 0;
     let textWasTruncated = false;
     let sourceSections = [];
-
     if (!isSelection && isPdfUrl(tab.url)) {
       documentKind = "PDF";
       try {
@@ -331,16 +322,33 @@ function injectModal(tab, isSelection, selectedText = "") {
       let results;
       try {
         results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
+          // A page can place readable content in an iframe. Check all frames
+          // and prefer an actual selection from any of them before using the
+          // document text as the full-page capture.
+          target: { tabId: tab.id, allFrames: true },
           func: () => {
-            const sel = window.getSelection().toString().trim();
-            return sel ? { isSelection: true, text: sel } : { isSelection: false, text: document.body.innerText };
+            const selectedPageText = window.getSelection?.().toString().trim() || "";
+            const activeElement = document.activeElement;
+            const isTextField = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement;
+            const selectedFieldText = isTextField
+              && typeof activeElement.selectionStart === "number"
+              && typeof activeElement.selectionEnd === "number"
+              && activeElement.selectionEnd > activeElement.selectionStart
+              ? activeElement.value.slice(activeElement.selectionStart, activeElement.selectionEnd).trim()
+              : "";
+            const selection = selectedPageText || selectedFieldText;
+            return selection
+              ? { isSelection: true, text: selection }
+              : { isSelection: false, text: document.body.innerText || "" };
           }
         });
       } catch {
         return;
       }
-      const payload = results?.[0]?.result || { isSelection: false, text: "" };
+      const payloads = results?.map(result => result?.result).filter(Boolean) || [];
+      const payload = payloads.find(result => result.isSelection)
+        || payloads.find(result => result.text)
+        || { isSelection: false, text: "" };
       textToUse = payload.text;
       finalIsSelection = payload.isSelection;
     }
@@ -374,13 +382,12 @@ function renderUI(context) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
   const summaryLanguages = [
-    ["auto", "Same as article"],
-    ["en", "English"], ["zh", "中文"], ["hi", "हिन्दी"],
-    ["es", "Español"], ["ar", "العربية"], ["fr", "Français"],
-    ["pt", "Português"], ["ru", "Русский"], ["de", "Deutsch"],
-    ["ja", "日本語"], ["tr", "Türkçe"], ["ko", "한국어"],
-    ["it", "Italiano"], ["pl", "Polski"], ["uk", "Українська"],
-    ["nl", "Nederlands"]
+    ["auto", "Same as article"], ["en", "English"], ["tr", "Türkçe"],
+    ["de", "Deutsch"], ["es", "Español"], ["fr", "Français"],
+    ["it", "Italiano"], ["pt", "Português"], ["nl", "Nederlands"],
+    ["pl", "Polski"], ["ru", "Русский"], ["uk", "Українська"],
+    ["ar", "العربية"], ["ja", "日本語"], ["ko", "한국어"],
+    ["zh", "中文"], ["hi", "हिन्दी"]
   ];
   const selectedSummaryLanguage = summaryLanguages.some(([value]) => value === context.summaryLanguage)
     ? context.summaryLanguage
@@ -399,6 +406,12 @@ function renderUI(context) {
   const summaryModeOptions = summaryModes.map(([value, label]) =>
     `<option value="${value}"${value === selectedSummaryMode ? " selected" : ""}>${label}</option>`
   ).join("");
+  const sourceLabels = {
+    en: "Source", tr: "Kaynak", de: "Quelle", es: "Fuente", fr: "Source",
+    it: "Fonte", pt: "Fonte", nl: "Bron", pl: "Źródło", ru: "Источник",
+    uk: "Джерело", ar: "المصدر", ja: "出典", ko: "출처", zh: "来源", hi: "स्रोत"
+  };
+  const pageLanguage = String(document.documentElement.lang || "").toLowerCase().split("-")[0];
   const showProductPrompt = (prompt) => {
     const body = document.getElementById("ai-body");
     if (!body || !prompt?.type) return;
@@ -482,19 +495,9 @@ function renderUI(context) {
         <span>${context.documentKind === "PDF" && context.pageCount ? `${context.pageCount} pages · ` : ""}~${context.wordCount} words</span>
       </div>
     </div>
+    ${context.documentKind === "PDF" && !context.isSelection ? `<div style="color:#6b7280;font-size:11px;line-height:1.4;margin:-6px 0 12px;">To summarize highlighted PDF text, right-click the selection and choose “Brief: summarize selected text”.</div>` : ""}
     <div id="ai-body">
-      ${context.sourceError ? `
-        <div style="color:#dc2626;font-size:12px;line-height:1.5;">${escapeHtml(context.sourceError)}</div>
-        <div style="color:#6b7280;font-size:12px;line-height:1.5;margin-top:8px;">Brief supports text-based PDFs. A scanned PDF needs OCR before it can be summarized.</div>
-      ` : `
-        ${context.textWasTruncated ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;line-height:1.4;margin-bottom:10px;">This PDF is long, so Brief will summarize the first part of its selectable text.</div>` : ""}
-        <label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label>
-        <select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select>
-        <label for="ai-summary-mode" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">What do you need?</label>
-        <select id="ai-summary-mode" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:6px;">${summaryModeOptions}</select>
-        <div style="color:#6b7280;font-size:11px;line-height:1.4;margin-bottom:10px;">Page notes use PDF pages; web pages are split into readable sections.</div>
-        <button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">${context.documentKind === "PDF" ? "Summarize PDF" : "Summarize"}</button>
-      `}
+      ${context.sourceError ? `<div style="color:#dc2626;font-size:12px;line-height:1.5;">${escapeHtml(context.sourceError)}</div><div style="color:#6b7280;font-size:12px;line-height:1.5;margin-top:8px;">Brief supports text-based PDFs. A scanned PDF needs OCR before it can be summarized.</div>` : `${context.textWasTruncated ? `<div style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;line-height:1.4;margin-bottom:10px;">This PDF is long, so Brief will summarize the first part of its selectable text.</div>` : ""}<label for="ai-language" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">Summary language</label><select id="ai-language" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:10px;">${languageOptions}</select><label for="ai-summary-mode" style="display:block;color:#4b5563;font-size:12px;font-weight:500;margin:0 0 6px;">What do you need?</label><select id="ai-summary-mode" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:6px;">${summaryModeOptions}</select><div style="color:#6b7280;font-size:11px;line-height:1.4;margin-bottom:10px;">Page notes use PDF pages; web pages are split into readable sections.</div><button id="ai-sum-btn" style="width:100%;padding:9px;background:#111827;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">${context.documentKind === "PDF" ? "Summarize PDF" : "Summarize"}</button>`}
     </div>
   `;
   document.body.appendChild(card);
@@ -525,13 +528,110 @@ function renderUI(context) {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
-          <button id="ai-change-options" style="width:100%;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;margin-bottom:8px;">Change summary options</button>
-          <input type="text" id="ai-tag" placeholder="Tag / Custom Title (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
-          <textarea id="ai-comment" rows="2" placeholder="Note (Optional)" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;margin-bottom:10px;"></textarea>
-          <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save Capture</button>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button id="ai-copy-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Copy summary</button>
+            <button id="ai-share-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Share</button>
+            <button id="ai-change-options" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Change options</button>
+          </div>
+          <div id="ai-share-options" style="display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
+            <button id="ai-system-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">System</button>
+            <button id="ai-whatsapp-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">WhatsApp</button>
+            <button id="ai-email-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Email</button>
+            <div id="ai-share-note" style="grid-column:1 / -1;color:#6b7280;font-size:11px;line-height:1.4;padding-top:2px;"></div>
+          </div>
+          <details style="margin:0 0 10px;"><summary style="color:#6b7280;cursor:pointer;font-size:12px;">Add a tag or note (optional)</summary><div style="padding-top:8px;"><input type="text" id="ai-tag" placeholder="Tag / Custom Title" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;margin-bottom:8px;"><textarea id="ai-comment" rows="2" placeholder="Note" style="width:100%;padding:8px;background:#ffffff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font-size:12px;box-sizing:border-box;resize:none;"></textarea></div></details>
+          <button id="ai-save-btn" style="width:100%;padding:9px;background:#059669;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;font-size:13px;">Save to library</button>
+          <button id="ai-discard-btn" style="width:100%;padding:7px;background:none;color:#6b7280;border:none;font-weight:500;cursor:pointer;font-size:12px;margin-top:4px;">Close without saving</button>
           <div id="ai-save-status" style="font-size:12px;text-align:center;margin-top:8px;"></div>
         `;
         document.getElementById("ai-change-options").onclick = () => renderUI(context);
+        document.getElementById("ai-discard-btn").onclick = () => card.remove();
+        // Use the language selected for this request, not the language that
+        // happened to be selected when the card was first opened.
+        const generatedShareLanguage = summaryLanguage === "auto" ? pageLanguage : summaryLanguage;
+        const generatedSourceLabel = sourceLabels[generatedShareLanguage] || sourceLabels[pageLanguage] || "Source";
+        const shareTitle = data.title || context.title || "Brief summary";
+        const shareText = [shareTitle, data.summary, context.url ? `${generatedSourceLabel}: ${context.url}` : ""].filter(Boolean).join("\n\n");
+        const shareFooters = {
+          tr: "Brief ile özetlendi · Brief’e kaydet:", es: "Resumido con Brief · Guarda una copia en Brief:",
+          de: "Mit Brief zusammengefasst · In Brief speichern:", fr: "Résumé avec Brief · Enregistrer dans Brief :",
+          it: "Riassunto con Brief · Salva una copia in Brief:", pt: "Resumido com Brief · Salvar uma cópia no Brief:",
+          nl: "Samengevat met Brief · Bewaar een kopie in Brief:", pl: "Podsumowano z Brief · Zapisz kopię w Brief:",
+          ru: "Кратко с Brief · Сохранить копию в Brief:", uk: "Підсумовано з Brief · Зберегти копію в Brief:",
+          ar: "تم التلخيص باستخدام Brief · احفظ نسخة في Brief:", ja: "Brief で要約 · Brief に保存:",
+          ko: "Brief로 요약됨 · Brief에 사본 저장:", zh: "由 Brief 总结 · 保存到 Brief:",
+          hi: "Brief द्वारा सारांशित · Brief में कॉपी सहेजें:"
+        };
+        const shareFooter = shareFooters[generatedShareLanguage] || "Summarized with Brief · Save a copy:";
+        const shareNotes = {
+          tr: "Paylaşımlar, alıcıların bir kopyayı kaydedebilmesi için listelenmemiş bir Brief bağlantısı içerir.",
+          es: "Las comparticiones incluyen un enlace no listado de Brief para que los destinatarios puedan guardar una copia.",
+          de: "Geteilte Inhalte enthalten einen nicht gelisteten Brief-Link, damit Empfänger eine Kopie speichern können.",
+          fr: "Les partages incluent un lien Brief non répertorié pour que les destinataires puissent enregistrer une copie.",
+          it: "Le condivisioni includono un link Brief non in elenco per consentire ai destinatari di salvare una copia.",
+          pt: "Os compartilhamentos incluem um link não listado do Brief para que os destinatários possam salvar uma cópia.",
+          nl: "Gedeelde items bevatten een niet-vermelde Brief-link zodat ontvangers een kopie kunnen opslaan.",
+          pl: "Udostępnienia zawierają niepubliczny link Brief, aby odbiorcy mogli zapisać kopię.",
+          ru: "В публикации есть непубличная ссылка Brief, чтобы получатели могли сохранить копию.",
+          uk: "Поширення містять непублічне посилання Brief, щоб одержувачі могли зберегти копію.",
+          ar: "تتضمن المشاركات رابط Brief غير مدرج ليتمكن المستلمون من حفظ نسخة.",
+          ja: "共有には、受信者がコピーを保存できる未公開の Brief リンクが含まれます。",
+          ko: "공유에는 수신자가 사본을 저장할 수 있도록 비공개 Brief 링크가 포함됩니다.",
+          zh: "分享内容包含一个未公开的 Brief 链接，收件人可以保存副本。",
+          hi: "शेयर में एक असूचीबद्ध Brief लिंक शामिल है ताकि प्राप्तकर्ता एक कॉपी सहेज सकें।"
+        };
+        document.getElementById("ai-share-note").innerText = shareNotes[generatedShareLanguage] || "Shares include an unlisted Brief link so recipients can save a copy.";
+        const shareOptions = document.getElementById("ai-share-options");
+        document.getElementById("ai-share-btn").onclick = () => {
+          shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
+        };
+        const shareTextWithBrief = () => new Promise((resolve, reject) => {
+          chrome.storage.local.get(["briefShareLinkConsent"], (stored) => {
+            if (!stored.briefShareLinkConsent) {
+              const include = confirm("To let recipients save this Brief, Brief will create an unlisted public link containing this title, summary, and source. OK includes the link. Cancel shares normally without it.");
+              if (!include) return resolve(shareText);
+              chrome.storage.local.set({ briefShareLinkConsent: true });
+            }
+            chrome.runtime.sendMessage({ action: "CREATE_SHARE_LINK", data: { title: shareTitle, summary: data.summary, sourceUrl: context.url } }, (res) => {
+              if (!res?.success || !res?.url) return reject(new Error(res?.error || "Could not create a Brief share link."));
+              resolve([shareText, `${shareFooter} ${res.url}`].filter(Boolean).join("\n\n"));
+            });
+          });
+        });
+        document.getElementById("ai-system-share").onclick = async () => {
+          if (!navigator.share) {
+            alert("System sharing is not available here. Choose WhatsApp, Email, or Copy instead.");
+            return;
+          }
+          try {
+            await navigator.share({ title: shareTitle, text: await shareTextWithBrief() });
+          } catch (error) {
+            if (error?.name !== "AbortError") alert("Could not open system sharing. Please try another option.");
+          }
+        };
+        document.getElementById("ai-whatsapp-share").onclick = async () => {
+          try {
+            window.open(`https://wa.me/?text=${encodeURIComponent(await shareTextWithBrief())}`, "_blank", "noopener,noreferrer");
+          } catch (error) {
+            alert(error.message || "Could not prepare this share.");
+          }
+        };
+        document.getElementById("ai-email-share").onclick = async () => {
+          try {
+            window.location.href = `mailto:?subject=${encodeURIComponent(shareTitle)}&body=${encodeURIComponent(await shareTextWithBrief())}`;
+          } catch (error) {
+            alert(error.message || "Could not prepare this share.");
+          }
+        };
+        document.getElementById("ai-copy-btn").onclick = async () => {
+          const copyButton = document.getElementById("ai-copy-btn");
+          try {
+            await navigator.clipboard.writeText(data.summary);
+            copyButton.innerText = "Copied";
+          } catch {
+            copyButton.innerText = "Copy unavailable";
+          }
+        };
         document.getElementById("ai-save-btn").onclick = () => {
           const statusDiv = document.getElementById("ai-save-status");
           statusDiv.style.color = "#6b7280";
