@@ -1361,6 +1361,24 @@ export default {
             const isOnboardingPreview = ${isBriefAdmin(user) && url.searchParams.get('preview') === 'extension-onboarding' ? 'true' : 'false'};
             try { localStorage.setItem('sessionToken', activeToken); } catch {}
 
+            const briefSessionChannel = typeof BroadcastChannel === 'function'
+              ? new BroadcastChannel('brief-session')
+              : null;
+            function goToSignedOutPage() {
+              try { localStorage.removeItem('sessionToken'); } catch {}
+              window.location.replace('/dashboard?action=logout');
+            }
+            function announceBriefSignedOut() {
+              briefSessionChannel?.postMessage({ type: 'signed_out' });
+              try { localStorage.setItem('brief-session-event', String(Date.now())); } catch {}
+            }
+            briefSessionChannel?.addEventListener('message', event => {
+              if (event.data?.type === 'signed_out') goToSignedOutPage();
+            });
+            window.addEventListener('storage', event => {
+              if (event.key === 'brief-session-event' && event.newValue) goToSignedOutPage();
+            });
+
             if (window.location.search.includes('token=')) {
               window.history.replaceState({}, document.title, window.location.pathname);
             }
@@ -1726,7 +1744,8 @@ export default {
             };
 
             document.getElementById('logoutBtn').onclick = () => {
-              localStorage.removeItem('sessionToken');
+              try { localStorage.removeItem('sessionToken'); } catch {}
+              announceBriefSignedOut();
               window.postMessage({ source: 'BRIEF_DASHBOARD', status: 'logged_out' }, window.location.origin);
               setTimeout(() => {
                 window.location.href = '/dashboard?action=logout';
@@ -1779,7 +1798,8 @@ export default {
                 });
                 const data = await res.json();
                 if (data.success) {
-                  localStorage.removeItem('sessionToken');
+                  try { localStorage.removeItem('sessionToken'); } catch {}
+                  announceBriefSignedOut();
                   window.postMessage({ source: 'BRIEF_DASHBOARD', status: 'logged_out' }, window.location.origin);
                   setTimeout(() => {
                     window.location.href = '/dashboard?action=logout';
