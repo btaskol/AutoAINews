@@ -885,7 +885,12 @@ export default {
           success: true,
           user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, role: dbUser?.role || 'user', trial: trialInfo },
           sessionToken: appSessionToken
-        }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
+        }), {
+          // Set the server session as well as returning the token to the page.
+          // This keeps the dashboard reachable if browser storage or the client
+          // redirect is interrupted after Google returns to Brief.
+          headers: { "Content-Type": "application/json", ...corsHeaders, 'Set-Cookie': briefSessionCookie(appSessionToken) }
+        });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Auth Error: " + err.message }), { status: 500, headers: corsHeaders });
       }
