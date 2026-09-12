@@ -504,7 +504,7 @@ function renderUI(context) {
             <button id="ai-change-options" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Change options</button>
           </div>
           <div id="ai-share-options" style="display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:-2px 0 10px;">
-            <button id="ai-brief-link-share" style="padding:7px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;font-weight:600;cursor:pointer;font-size:11px;">Brief link</button>
+            <button id="ai-brief-link-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Brief link</button>
             <button id="ai-system-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">System</button>
             <button id="ai-whatsapp-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">WhatsApp</button>
             <button id="ai-email-share" style="padding:7px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:11px;">Email</button>
@@ -524,12 +524,22 @@ function renderUI(context) {
         };
         document.getElementById("ai-brief-link-share").onclick = () => {
           const button = document.getElementById("ai-brief-link-share");
+          const resetBriefLinkButton = () => {
+            button.style.background = "#ffffff";
+            button.style.color = "#374151";
+            button.style.borderColor = "#d1d5db";
+            button.style.fontWeight = "500";
+          };
           button.disabled = true;
+          button.style.background = "#eff6ff";
+          button.style.color = "#1d4ed8";
+          button.style.borderColor = "#bfdbfe";
           button.innerText = "Creating…";
           chrome.runtime.sendMessage({ action: "CREATE_SHARE_LINK", data: { title: shareTitle, summary: data.summary, sourceUrl: context.url } }, async (res) => {
             button.disabled = false;
             if (!res?.success || !res?.url) {
               button.innerText = "Brief link";
+              resetBriefLinkButton();
               alert(res?.error || "Could not create a Brief link.");
               return;
             }
@@ -542,6 +552,7 @@ function renderUI(context) {
               } catch (error) {
                 if (error?.name === "AbortError") {
                   button.innerText = "Brief link";
+                  resetBriefLinkButton();
                   return;
                 }
               }
@@ -551,6 +562,7 @@ function renderUI(context) {
               button.innerText = "Link copied";
             } catch {
               button.innerText = "Brief link";
+              resetBriefLinkButton();
               alert(`Brief link: ${res.url}`);
             }
           });
