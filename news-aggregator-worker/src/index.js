@@ -1069,6 +1069,7 @@ export default {
             <div class="share-wrap">
               <button type="button" class="btn-share" onclick="shareBrief('${s.id}')">Share</button>
               <div id="share-menu-${s.id}" class="share-menu" hidden>
+                <button type="button" onclick="shareBriefVia('${s.id}', 'system')">System share</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'whatsapp')">WhatsApp</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'email')">Email</button>
                 <button type="button" onclick="shareBriefVia('${s.id}', 'copy')">Copy</button>
@@ -1433,19 +1434,7 @@ export default {
               }
             }
 
-            async function shareBrief(id) {
-              const { title, text, url } = shareData(id);
-              if (navigator.share) {
-                try {
-                  await navigator.share({ title, text, url });
-                } catch (error) {
-                  // Closing the system sheet is a normal user choice. Keep the
-                  // fallback menu for browsers that do not provide native share;
-                  // do not switch behaviour between consecutive Mac clicks.
-                  if (error?.name !== 'AbortError') console.warn('System share was unavailable.', error);
-                }
-                return;
-              }
+            function shareBrief(id) {
               const menu = document.getElementById('share-menu-' + id);
               const isOpen = !menu.hidden;
               closeShareMenus();
@@ -1453,9 +1442,21 @@ export default {
             }
 
             async function shareBriefVia(id, method) {
-              const { title, text } = shareData(id);
+              const { title, text, url } = shareData(id);
               closeShareMenus();
               if (method === 'copy') return copyShareText(id);
+              if (method === 'system') {
+                if (!navigator.share) {
+                  alert('System sharing is not available in this browser. Choose WhatsApp, Email, or Copy instead.');
+                  return;
+                }
+                try {
+                  await navigator.share({ title, text, url });
+                } catch (error) {
+                  if (error?.name !== 'AbortError') alert('Could not open system sharing. Please try another option.');
+                }
+                return;
+              }
               if (method === 'email') {
                 window.location.href = 'mailto:?subject=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(text);
                 return;
