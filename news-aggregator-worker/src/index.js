@@ -1438,10 +1438,13 @@ export default {
               if (navigator.share) {
                 try {
                   await navigator.share({ title, text, url });
-                  return;
                 } catch (error) {
-                  if (error?.name === 'AbortError') return;
+                  // Closing the system sheet is a normal user choice. Keep the
+                  // fallback menu for browsers that do not provide native share;
+                  // do not switch behaviour between consecutive Mac clicks.
+                  if (error?.name !== 'AbortError') console.warn('System share was unavailable.', error);
                 }
+                return;
               }
               const menu = document.getElementById('share-menu-' + id);
               const isOpen = !menu.hidden;
