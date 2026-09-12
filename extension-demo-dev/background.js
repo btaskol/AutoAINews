@@ -369,6 +369,15 @@ function renderUI(context) {
   const summaryModeOptions = summaryModes.map(([value, label]) =>
     `<option value="${value}"${value === selectedSummaryMode ? " selected" : ""}>${label}</option>`
   ).join("");
+  const sourceLabels = {
+    en: "Source", tr: "Kaynak", de: "Quelle", es: "Fuente", fr: "Source",
+    it: "Fonte", pt: "Fonte", nl: "Bron", pl: "Źródło", ru: "Источник",
+    uk: "Джерело", ar: "المصدر", ja: "出典", ko: "출처", zh: "来源", hi: "स्रोत"
+  };
+  const pageLanguage = String(document.documentElement.lang || "").toLowerCase().split("-")[0];
+  const shareSourceLabel = sourceLabels[pageLanguage]
+    || sourceLabels[selectedSummaryLanguage]
+    || "Source";
   const showProductPrompt = (prompt) => {
     const body = document.getElementById("ai-body");
     if (!body || !prompt?.type) return;
@@ -503,7 +512,7 @@ function renderUI(context) {
         document.getElementById("ai-change-options").onclick = () => renderUI(context);
         document.getElementById("ai-discard-btn").onclick = () => card.remove();
         const shareTitle = data.title || context.title || "Brief summary";
-        const shareText = [shareTitle, data.summary, context.url ? `Source: ${context.url}` : ""].filter(Boolean).join("\n\n");
+        const shareText = [shareTitle, data.summary, context.url ? `${shareSourceLabel}: ${context.url}` : ""].filter(Boolean).join("\n\n");
         const shareOptions = document.getElementById("ai-share-options");
         document.getElementById("ai-share-btn").onclick = () => {
           shareOptions.style.display = shareOptions.style.display === "grid" ? "none" : "grid";
