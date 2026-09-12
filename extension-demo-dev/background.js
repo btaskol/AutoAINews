@@ -84,13 +84,33 @@ function clearCardFromAllTabs() {
   });
 }
 
-function syncDashboardLoginTabs(token) {
+function syncDashboardLoginTabs(token, excludedTabId = null) {
   chrome.tabs.query({ url: `${API_BASE}/*` }, (tabs) => {
     tabs.forEach((tab) => {
-      if (tab?.id) {
+      if (tab?.id && tab.id !== excludedTabId) {
         chrome.tabs.update(tab.id, { url: `${API_BASE}/dashboard?token=${token}` });
       }
     });
+  });
+}
+
+function restorePanelAfterDashboardLogin(tabId, token) {
+  let finished = false;
+  const restore = () => {
+    if (finished) return;
+    finished = true;
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+    chrome.tabs.get(tabId, (tab) => {
+      if (!chrome.runtime.lastError && tab?.id) injectModal(tab, false);
+    });
+  };
+  const onUpdated = (updatedTabId, changeInfo) => {
+    if (updatedTabId === tabId && changeInfo.status === "complete") restore();
+  };
+  chrome.tabs.onUpdated.addListener(onUpdated);
+  setTimeout(restore, 8000);
+  chrome.tabs.update(tabId, { url: `${API_BASE}/dashboard?token=${token}` }, () => {
+    if (chrome.runtime.lastError) restore();
   });
 }
 
@@ -130,6 +150,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "LOGIN_GOOGLE") {
+    // Keep the originating tab so the signed-in panel can be restored after
+    // Chrome closes the interactive OAuth window.
+    const sourceTabId = sender.tab?.id;
     const redirectUrl = chrome.identity.getRedirectURL();
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
@@ -155,7 +178,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const data = await res.json();
         if (data.success) {
           chrome.storage.local.set({ sessionToken: data.sessionToken, user: data.user }, () => {
-            syncDashboardLoginTabs(data.sessionToken);
+            syncDashboardLoginTabs(data.sessionToken, sourceTabId);
+            if (sourceTabId) {
+              chrome.tabs.get(sourceTabId, (sourceTab) => {
+                if (chrome.runtime.lastError || !sourceTab?.id) return;
+                if (sourceTab.url?.startsWith(`${API_BASE}/`)) {
+                  restorePanelAfterDashboardLogin(sourceTab.id, data.sessionToken);
+                } else {
+                  injectModal(sourceTab, false);
+                }
+              });
+            }
             sendResponse({ success: true, user: data.user });
           });
         } else {
