@@ -348,13 +348,15 @@ function renderUI(context) {
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+  // Order languages by broad global web-content reach, rather than by the
+  // development team's locale. "Same as article" remains the default.
   const summaryLanguages = [
-    ["auto", "Same as article"], ["en", "English"], ["tr", "Türkçe"],
-    ["de", "Deutsch"], ["es", "Español"], ["fr", "Français"],
-    ["it", "Italiano"], ["pt", "Português"], ["nl", "Nederlands"],
-    ["pl", "Polski"], ["ru", "Русский"], ["uk", "Українська"],
-    ["ar", "العربية"], ["ja", "日本語"], ["ko", "한국어"],
-    ["zh", "中文"], ["hi", "हिन्दी"]
+    ["auto", "Same as article"], ["en", "English"], ["es", "Español"],
+    ["de", "Deutsch"], ["ja", "日本語"], ["fr", "Français"],
+    ["pt", "Português"], ["ru", "Русский"], ["zh", "中文"],
+    ["ar", "العربية"], ["hi", "हिन्दी"], ["ko", "한국어"],
+    ["it", "Italiano"], ["tr", "Türkçe"], ["nl", "Nederlands"],
+    ["pl", "Polski"], ["uk", "Українська"]
   ];
   const selectedSummaryLanguage = summaryLanguages.some(([value]) => value === context.summaryLanguage)
     ? context.summaryLanguage
