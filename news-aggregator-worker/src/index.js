@@ -1860,7 +1860,11 @@ export default {
 
     await touchUserActivity(env, user);
 
-    const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first();
+    // Non-API requests such as a browser's favicon lookup are not authenticated.
+    // They must not attempt to read a user field before their route is handled.
+    const trialRecord = user
+      ? await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(user.email).first()
+      : null;
     const trialInfo = calculateTrial(user, trialRecord);
 
     if (url.pathname === '/api/share-links' && req.method === 'POST') {
