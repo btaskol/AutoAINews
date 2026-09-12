@@ -14,14 +14,16 @@ Beta users can save, delete, search, and share without affecting their summary a
 
 ## Proposed production offer — confirm before enabling payments
 
-| Plan | Price | Included summaries | Period | Notes |
-| --- | --- | --- | --- | --- |
-| Free | €0 | 10 | Calendar month | No payment method required. |
-| Pro monthly | €7/month | 250 | Calendar month | Monthly subscription. |
-| Pro yearly | €59/year | 250 per month | Calendar month | €25 less than paying monthly for twelve months. |
-| Credit top-up | Proposed: €3 per 100 credits | 100 additional summaries | Never expires while the account is active | Available only after a paid subscriber reaches the included monthly limit. |
+| Plan | Price | Limit | Estimated benefit after VAT, payment fees, normal AI use, and hosting* | Notes |
+| --- | --- | --- | ---: | --- |
+| Free | €0 | 10 summaries/month | — | No payment method required. |
+| Pro monthly | €7/month | 250 summaries/month | **~€5.07/month** | Monthly subscription. |
+| Pro yearly | €59/year | 250 summaries/month | **~€43.32/year** (about €3.61/month) | €25 less than paying monthly for twelve months. |
+| Credit top-up | Proposed: €3 one-time | 100 additional summaries | **~€2.04/top-up** | Available only after a paid subscriber reaches the included monthly limit. |
 
 Prices must be configured and verified in Stripe before they are shown publicly. Confirm tax treatment, payment processing fees, and the final customer-facing wording before launch.
+
+\*Estimated benefit is contribution margin, not final company profit. Its assumptions and calculation are documented below.
 
 ### How top-up credits should work
 
