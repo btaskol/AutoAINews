@@ -636,6 +636,19 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           window.history.replaceState({}, document.title, '/dashboard');
         }
 
+        const briefSessionChannel = typeof BroadcastChannel === 'function'
+          ? new BroadcastChannel('brief-session')
+          : null;
+        function loadDashboardAfterSignIn() {
+          if (!window.location.hash.includes('id_token=')) window.location.replace('/dashboard');
+        }
+        briefSessionChannel?.addEventListener('message', event => {
+          if (event.data?.type === 'signed_in') loadDashboardAfterSignIn();
+        });
+        window.addEventListener('storage', event => {
+          if (event.key === 'brief-session-signed-in' && event.newValue) loadDashboardAfterSignIn();
+        });
+
         const statusMsg = document.getElementById('statusMsg');
 
         function returnPathFromState() {
@@ -1370,13 +1383,17 @@ export default {
             }
             function announceBriefSignedOut() {
               briefSessionChannel?.postMessage({ type: 'signed_out' });
-              try { localStorage.setItem('brief-session-event', String(Date.now())); } catch {}
+              try { localStorage.setItem('brief-session-signed-out', String(Date.now())); } catch {}
+            }
+            function announceBriefSignedIn() {
+              briefSessionChannel?.postMessage({ type: 'signed_in' });
+              try { localStorage.setItem('brief-session-signed-in', String(Date.now())); } catch {}
             }
             briefSessionChannel?.addEventListener('message', event => {
               if (event.data?.type === 'signed_out') goToSignedOutPage();
             });
             window.addEventListener('storage', event => {
-              if (event.key === 'brief-session-event' && event.newValue) goToSignedOutPage();
+              if ((event.key === 'brief-session-signed-out' || event.key === 'brief-session-event') && event.newValue) goToSignedOutPage();
             });
 
             if (window.location.search.includes('token=')) {
@@ -1392,6 +1409,7 @@ export default {
             }
 
             emitAuthState();
+            announceBriefSignedIn();
           </script>
           <header>
             <div class="brand">
