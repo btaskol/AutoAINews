@@ -530,6 +530,7 @@ function renderUI(context) {
       if (data?.summary) {
         body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
+          <div id="ai-summary-feedback" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:9px 10px;margin-bottom:10px;color:#4b5563;font-size:12px;">Was this summary helpful? <button id="ai-summary-helpful" style="background:#fff;border:1px solid #d1d5db;border-radius:5px;color:#374151;cursor:pointer;font-size:12px;margin-left:5px;padding:4px 7px;">Yes</button><button id="ai-summary-not-helpful" style="background:#fff;border:1px solid #d1d5db;border-radius:5px;color:#374151;cursor:pointer;font-size:12px;margin-left:4px;padding:4px 7px;">No</button></div>
           <div style="display:flex;gap:8px;margin-bottom:8px;">
             <button id="ai-copy-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Copy summary</button>
             <button id="ai-share-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Share</button>
@@ -548,6 +549,20 @@ function renderUI(context) {
         `;
         document.getElementById("ai-change-options").onclick = () => renderUI(context);
         document.getElementById("ai-discard-btn").onclick = () => card.remove();
+        const submitSummaryFeedback = (helpful, comment = "") => {
+          chrome.runtime.sendMessage({ action: "SUBMIT_PRODUCT_FEEDBACK", data: { type: "summary_feedback", helpful, comment } }, (res) => {
+            const feedback = document.getElementById("ai-summary-feedback");
+            if (!feedback) return;
+            feedback.innerText = res?.success ? "Thank you — this helps improve Brief." : (res?.error || "Could not send feedback.");
+          });
+        };
+        document.getElementById("ai-summary-helpful").onclick = () => submitSummaryFeedback(true);
+        document.getElementById("ai-summary-not-helpful").onclick = () => {
+          const feedback = document.getElementById("ai-summary-feedback");
+          feedback.innerHTML = `<div style="margin-bottom:6px;">What could be better? <span style="color:#6b7280;">(optional)</span></div><textarea id="ai-summary-feedback-comment" rows="2" maxlength="1200" style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:5px;font:inherit;font-size:12px;padding:6px;resize:none;"></textarea><button id="ai-summary-feedback-send" style="background:#111827;border:0;border-radius:5px;color:#fff;cursor:pointer;font-size:12px;margin-top:6px;padding:6px 8px;">Send feedback</button><button id="ai-summary-feedback-skip" style="background:none;border:0;color:#6b7280;cursor:pointer;font-size:12px;margin-left:6px;">Skip</button>`;
+          document.getElementById("ai-summary-feedback-send").onclick = () => submitSummaryFeedback(false, document.getElementById("ai-summary-feedback-comment").value.trim());
+          document.getElementById("ai-summary-feedback-skip").onclick = () => submitSummaryFeedback(false);
+        };
         // Use the language selected for this request, not the language that
         // happened to be selected when the card was first opened.
         const generatedShareLanguage = summaryLanguage === "auto" ? pageLanguage : summaryLanguage;
@@ -645,7 +660,9 @@ function renderUI(context) {
             comment: document.getElementById("ai-comment").value.trim(),
             url: context.url,
             summary: data.summary,
-            pageText: context.pageText
+            pageText: context.pageText,
+            summaryLanguage,
+            summaryMode
           };
           chrome.runtime.sendMessage({ action: "SAVE_DASHBOARD", data: payload }, (res) => {
             if (res?.success) {

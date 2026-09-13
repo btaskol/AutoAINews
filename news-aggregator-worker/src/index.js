@@ -413,6 +413,24 @@ async function touchUserActivity(env, user) {
   }
 }
 
+const PRODUCT_EVENT_NAMES = new Set([
+  'summary_requested', 'summary_succeeded', 'summary_failed',
+  'summary_saved', 'share_created', 'share_opened', 'share_copy_saved'
+]);
+
+// Product analytics are intentionally coarse. Never put source text, titles,
+// URLs, search queries, IP addresses, or free-form feedback in this table.
+async function recordProductEvent(env, { userId = null, eventName, summaryLanguage = null, summaryMode = null, durationMs = null, shareToken = null }) {
+  if (!PRODUCT_EVENT_NAMES.has(eventName)) return;
+  try {
+    await env.DB.prepare(`INSERT INTO product_events (user_id, event_name, summary_language, summary_mode, duration_ms, share_token) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(userId || null, eventName, summaryLanguage && SUMMARY_LANGUAGE_LABELS[summaryLanguage] ? summaryLanguage : null, ['quick', 'detailed', 'standard', 'source_notes'].includes(summaryMode) ? summaryMode : null, Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null, isPublicShareToken(shareToken) ? shareToken : null)
+      .run();
+  } catch (_) {
+    // Analytics must never interrupt a requested summary, save, or share.
+  }
+}
+
 function sourceLabelForUrl(value) {
   try {
     return new URL(value).hostname.replace(/^www\./i, '') || 'Web capture';
@@ -731,11 +749,11 @@ function renderLegalPage(origin, page) {
     <ul>
       <li><strong>Account information:</strong> your Google account ID, email address, name, and profile image supplied when you choose to sign in with Google.</li>
       <li><strong>Content you choose to capture:</strong> page URLs, page or selected text, page titles, generated summaries, tags, notes, and pins. Do not capture content you are not permitted to share or process.</li>
-      <li><strong>Service and support information:</strong> summary-language preference, quota and usage records, your most recent meaningful activity, ratings, optional feedback, and issue reports (including an optional page URL).</li>
+      <li><strong>Service and support information:</strong> summary-language preference, quota and usage records, your most recent meaningful activity, ratings, optional feedback, and issue reports (including an optional page URL). We also record coarse product events—such as a summary request succeeding or failing, request duration, saving, sharing, and a shared link being opened or saved—to improve reliability and understand feature use. These product-event records do not contain captured page text, page titles, source URLs, search queries, age, gender, or precise location.</li>
       <li><strong>Session information:</strong> an authentication session cookie and local browser storage needed to keep you signed in and remember display preferences.</li>
     </ul>
     <h2>How we use it</h2>
-    <p>We use this information to authenticate you, create and store your personal library, generate requested summaries, apply plan limits, provide support, protect the service from abuse, and improve Brief from optional feedback. We do not sell personal information or use saved content for advertising.</p>
+    <p>We use this information to authenticate you, create and store your personal library, generate requested summaries, apply plan limits, provide support, protect the service from abuse, and improve Brief from optional feedback. We do not sell personal information or use saved content for advertising. Brief’s use of information received from Google APIs adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements.</p>
     <h2>Service providers and sharing</h2>
     <p>Brief uses <strong>Google</strong> for sign-in, <strong>Cloudflare</strong> to run the service and store application data, and <strong>Groq</strong> to generate a summary when you ask for one. The text and title you submit for a summary, plus your selected output language, are sent to Groq for that purpose. We share information only with providers needed to operate Brief, to comply with law, or to protect against fraud or abuse.</p>
     <h2>Storage and retention</h2>
@@ -817,6 +835,12 @@ function renderAdminUsersPage(token, metrics, users) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Users & activity — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:1050px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.metrics{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:22px 0}.metric{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.metric span{color:#6b7280;font-size:12px}.metric strong{display:block;font-size:24px;margin-top:5px}.table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e7eb;font-size:13px;padding:12px;text-align:left;white-space:nowrap}th{color:#6b7280;font-size:12px}td small{display:block;margin-top:3px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}body{padding:20px 12px}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Users & activity</h1><p class="muted">Activity is based on a user’s most recent meaningful Brief request, updated at most once every 15 minutes. It is not live online/offline tracking. Times are shown in Madrid time.</p><section class="metrics">${metric('All users',metrics.total_users)}${metric('New in 7 days',metrics.new_users_7d)}${metric('Active in 1 day',metrics.active_1d)}${metric('Active in 7 days',metrics.active_7d)}${metric('Active in 30 days',metrics.active_30d)}${metric('Pro members',metrics.paid_users)}${metric('Canceling',metrics.canceling_users)}</section><div class="table-wrap"><table><thead><tr><th>User</th><th>Plan</th><th>Captures</th><th>Last active (Madrid)</th><th>Joined (Madrid)</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
 }
 
+function renderAdminAnalyticsPage(token, metrics, languages, modes) {
+  const metric = (label, value) => `<div class="metric"><span>${label}</span><strong>${value === '—' ? value : Number(value || 0)}</strong></div>`;
+  const rows = (items, label) => items.length ? items.map(item => `<tr><td>${escapeHtml(item[label] || 'Not specified')}</td><td>${Number(item.count || 0)}</td></tr>`).join('') : '<tr><td colspan="2">No data yet.</td></tr>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Product analytics — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:960px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted{color:#6b7280;font-size:13px;line-height:1.55}.metrics{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:22px 0}.metric,.table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.metric span{color:#6b7280;font-size:12px}.metric strong{display:block;font-size:24px;margin-top:5px}.grids{display:grid;gap:16px;grid-template-columns:1fr 1fr}.table-wrap{overflow:auto;padding:0}h2{font-size:16px;margin:0 0 10px}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e7eb;font-size:13px;padding:12px;text-align:left}th{color:#6b7280;font-size:12px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.grids{grid-template-columns:1fr}body{padding:20px 12px}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Product analytics</h1><p class="muted">Last 30 days. These are aggregate product events only: Brief does not put saved page content, URLs, search queries, age, gender, or location in analytics.</p><section class="metrics">${metric('Summary requests', metrics.summary_requested)}${metric('Successful summaries', metrics.summary_succeeded)}${metric('Failed summaries', metrics.summary_failed)}${metric('Average summary time', metrics.avg_duration_label)}${metric('Saved summaries', metrics.summary_saved)}${metric('Shares created', metrics.share_created)}${metric('Shared-link opens', metrics.share_opened)}${metric('Copies saved', metrics.share_copy_saved)}${metric('Helpful', metrics.helpful)}${metric('Not helpful', metrics.not_helpful)}</section><section class="grids"><div><h2>Summary language</h2><div class="table-wrap"><table><thead><tr><th>Language</th><th>Successful summaries</th></tr></thead><tbody>${rows(languages, 'summary_language')}</tbody></table></div></div><div><h2>Summary format</h2><div class="table-wrap"><table><thead><tr><th>Format</th><th>Successful summaries</th></tr></thead><tbody>${rows(modes, 'summary_mode')}</tbody></table></div></div></section></main></body></html>`;
+}
+
 function renderAdminReportsPage(token, reports) {
   const rows = reports.length ? reports.map(report => `<article class="report"><div class="head"><div><strong>${escapeHtml(report.email)}</strong><small>${escapeHtml(report.category)} · ${escapeHtml(report.source)} · ${formatMadridTime(report.created_at)}</small></div><label>Status<select class="status" data-id="${report.id}">${['new','reviewing','planned','resolved'].map(status => `<option value="${status}"${status === report.status ? ' selected' : ''}>${status}</option>`).join('')}</select></label></div><p>${escapeHtml(report.message)}</p>${report.page_url ? `<a href="${escapeHtml(report.page_url)}" target="_blank" rel="noopener noreferrer">Open reported page ↗</a>` : ''}</article>`).join('') : '<div class="empty">No reports yet.</div>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reports — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:850px}.top,.head{align-items:center;display:flex;gap:12px;justify-content:space-between}.top{margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back,a{color:#2563eb;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.report,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin:12px 0;padding:16px}.report p{line-height:1.55;white-space:pre-wrap}.head strong,.head small{display:block}.head label{color:#6b7280;display:grid;font-size:12px;gap:5px}.status{background:#fff;border:1px solid #d1d5db;border-radius:6px;font:inherit;padding:7px}@media(max-width:600px){.head{align-items:flex-start;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Reports</h1><p class="muted">Private reports from Brief users. Saved article content is never included automatically.</p><section>${rows}</section></main><script>const token=${JSON.stringify(token)};document.querySelectorAll('.status').forEach(select=>select.addEventListener('change',async()=>{const res=await fetch('/api/admin/reports/status',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({id:select.dataset.id,status:select.value})});if(!res.ok)alert('Could not update report status.');}));</script></body></html>`;
@@ -843,6 +867,7 @@ export default {
       if (!isPublicShareToken(token)) return new Response('Not found', { status: 404 });
       const share = await env.DB.prepare('SELECT token, title, summary, source_url FROM public_share_links WHERE token = ?').bind(token).first();
       if (!share) return new Response('This shared Brief is unavailable.', { status: 404, headers: htmlHeaders });
+      await recordProductEvent(env, { eventName: 'share_opened', shareToken: token });
       return new Response(renderPublicSharePage(origin, share), { headers: { ...htmlHeaders, 'X-Robots-Tag': 'noindex, nofollow, noarchive' } });
     }
 
@@ -1016,6 +1041,25 @@ export default {
         env.DB.prepare(`SELECT u.email, u.name, u.created_at, u.last_active_at, u.subscription_status, COUNT(s.id) AS capture_count FROM users u LEFT JOIN summaries s ON s.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_active_at, u.created_at) DESC LIMIT 200`).all()
       ]);
       return new Response(renderAdminUsersPage(token, metrics, userList.results || []), { headers: htmlHeaders });
+    }
+
+    if (url.pathname === "/admin/analytics" && req.method === "GET") {
+      const token = url.searchParams.get('token');
+      const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
+      await touchUserActivity(env, user);
+      const [{ results: eventCounts }, { results: languages }, { results: modes }, feedback] = await Promise.all([
+        env.DB.prepare(`SELECT event_name, COUNT(*) AS count, AVG(duration_ms) AS avg_duration_ms FROM product_events WHERE created_at >= datetime('now', '-30 days') GROUP BY event_name`).all(),
+        env.DB.prepare(`SELECT summary_language, COUNT(*) AS count FROM product_events WHERE event_name = 'summary_succeeded' AND created_at >= datetime('now', '-30 days') GROUP BY summary_language ORDER BY count DESC`).all(),
+        env.DB.prepare(`SELECT summary_mode, COUNT(*) AS count FROM product_events WHERE event_name = 'summary_succeeded' AND created_at >= datetime('now', '-30 days') GROUP BY summary_mode ORDER BY count DESC`).all(),
+        env.DB.prepare(`SELECT SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END) AS helpful, SUM(CASE WHEN helpful = 0 THEN 1 ELSE 0 END) AS not_helpful FROM summary_feedback WHERE created_at >= datetime('now', '-30 days')`).first()
+      ]);
+      const metrics = Object.fromEntries((eventCounts || []).map(row => [row.event_name, row.count]));
+      const successful = (eventCounts || []).find(row => row.event_name === 'summary_succeeded');
+      metrics.avg_duration_label = successful?.avg_duration_ms ? `${(Number(successful.avg_duration_ms) / 1000).toFixed(1)}s` : '—';
+      metrics.helpful = feedback?.helpful || 0;
+      metrics.not_helpful = feedback?.not_helpful || 0;
+      return new Response(renderAdminAnalyticsPage(token, metrics, languages || [], modes || []), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/reports" && req.method === "GET") {
@@ -1232,6 +1276,7 @@ export default {
       const adminFeedbackBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="feedbackBtn">Feedback</button>' : '';
       const adminReportsBtnHtml = canManageFeedback(user) ? '<button class="dropdown-item" id="reportsBtn">Reports</button>' : '';
       const adminUsersBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="usersBtn">Users & activity</button>' : '';
+      const adminAnalyticsBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="analyticsBtn">Product analytics</button>' : '';
       const adminTeamBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="teamBtn">Team access</button>' : '';
       const adminPilotBtnHtml = isBriefAdmin(user) ? '<button class="dropdown-item" id="pilotBtn">Pilot access</button>' : '';
       const adminOnboardingPreviewBtnHtml = isBriefAdmin(user) && env.SEED_TAG_DEMO === 'true' ? '<button class="dropdown-item" id="onboardingPreviewBtn">Preview extension setup</button>' : '';
@@ -1427,6 +1472,7 @@ export default {
                   ${adminFeedbackBtnHtml}
                   ${adminReportsBtnHtml}
                   ${adminUsersBtnHtml}
+                  ${adminAnalyticsBtnHtml}
                   ${adminTeamBtnHtml}
                   ${adminPilotBtnHtml}
                   ${adminOnboardingPreviewBtnHtml}
@@ -1778,6 +1824,8 @@ export default {
             if (reportsBtn) reportsBtn.onclick = () => { window.location.href = '/admin/reports?token=${encodeURIComponent(token)}'; };
             const usersBtn = document.getElementById('usersBtn');
             if (usersBtn) usersBtn.onclick = () => { window.location.href = '/admin/users?token=${encodeURIComponent(token)}'; };
+            const analyticsBtn = document.getElementById('analyticsBtn');
+            if (analyticsBtn) analyticsBtn.onclick = () => { window.location.href = '/admin/analytics?token=${encodeURIComponent(token)}'; };
             const teamBtn = document.getElementById('teamBtn');
             if (teamBtn) teamBtn.onclick = () => { window.location.href = '/admin/team?token=${encodeURIComponent(token)}'; };
             const pilotBtn = document.getElementById('pilotBtn');
@@ -1961,6 +2009,7 @@ export default {
         const token = crypto.randomUUID().replace(/-/g, '');
         await env.DB.prepare('INSERT INTO public_share_links (token, owner_user_id, title, summary, source_url) VALUES (?, ?, ?, ?, ?)')
           .bind(token, user.id, title, summary, sourceUrl).run();
+        await recordProductEvent(env, { userId: user.id, eventName: 'share_created', shareToken: token });
         return new Response(JSON.stringify({ success: true, url: `${origin}/s/${token}` }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
       } catch (err) {
         return new Response(JSON.stringify({ error: 'Could not create the share link.' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
@@ -1978,6 +2027,7 @@ export default {
         if (saved.meta?.changes) {
           await env.DB.prepare('INSERT INTO summaries (user_id, title, custom_title, comment, url, summary) VALUES (?, ?, ?, ?, ?, ?)')
             .bind(user.id, share.title, '', '', share.source_url, share.summary).run();
+          await recordProductEvent(env, { userId: user.id, eventName: 'share_copy_saved', shareToken: token });
         }
         return new Response(JSON.stringify({ success: true, alreadySaved: !saved.meta?.changes }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
       } catch (err) {
@@ -2083,6 +2133,8 @@ export default {
 
       const { pageText, pageTitle, summaryLanguage, summaryMode, sourceSections } = await req.json().catch(() => ({}));
       const mode = normalizeSummaryMode(summaryMode);
+      const selectedLanguage = SUMMARY_LANGUAGE_LABELS[String(summaryLanguage || 'auto').toLowerCase()] ? String(summaryLanguage || 'auto').toLowerCase() : 'auto';
+      const summaryStartedAt = Date.now();
       // A single bounded request stays within the beta Groq account's TPM
       // allowance. The older multi-chunk flow could turn one long PDF into
       // several large requests and fail half way through.
@@ -2103,8 +2155,11 @@ export default {
       }
       if (!env.GROQ_API_KEY) return new Response(JSON.stringify({ error: "Summary service is not configured." }), { status: 503, headers: corsHeaders });
 
+      await recordProductEvent(env, { userId: user.id, eventName: 'summary_requested', summaryLanguage: selectedLanguage, summaryMode: mode });
+
       const quota = await reserveSummaryQuota(env, user);
       if (!quota.allowed) {
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
         const planName = user?.subscription_status === 'active' ? 'Pro' : 'Free';
         return new Response(JSON.stringify({
           error: `${planName} summary limit reached. Please wait for the next billing month or upgrade your plan.`,
@@ -2194,12 +2249,15 @@ export default {
 
         if (!summary) {
           await releaseSummaryQuota(env, user, quota.periodKey);
+          await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
           return new Response(JSON.stringify({ error: "Groq Error: " + (lastError || "No accessible models found.") }), { status: 500, headers: corsHeaders });
         }
 
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_succeeded', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
         return new Response(JSON.stringify({ summary, title: generatedTitle || fallbackTitleFromSummary(summary) || sourceTitle || null }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
         await releaseSummaryQuota(env, user, quota.periodKey);
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
         return new Response(JSON.stringify({ error: "AI Error: " + err.message }), { status: 500, headers: corsHeaders });
       }
     }
@@ -2208,8 +2266,15 @@ export default {
       const body = await req.json().catch(() => ({}));
       const type = String(body?.type || '');
       const skipped = body?.skip === true;
-      if (!['use_case', 'feedback'].includes(type)) {
+      if (!['use_case', 'feedback', 'summary_feedback'].includes(type)) {
         return new Response(JSON.stringify({ error: 'Unsupported feedback type.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      if (type === 'summary_feedback') {
+        const helpful = body?.helpful === true ? 1 : body?.helpful === false ? 0 : null;
+        const comment = String(body?.comment || '').trim().slice(0, 1200);
+        if (helpful === null) return new Response(JSON.stringify({ error: 'Choose whether the summary was helpful.' }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+        await env.DB.prepare('INSERT INTO summary_feedback (user_id, helpful, comment) VALUES (?, ?, ?)').bind(user.id, helpful, comment || null).run();
+        return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       }
       await env.DB.prepare('INSERT OR IGNORE INTO user_product_feedback (user_id) VALUES (?)').bind(user.id).run();
       if (type === 'use_case') {
@@ -2331,7 +2396,7 @@ export default {
       }
 
       const body = await req.json().catch(() => ({}));
-      const { title, customTitle, comment, url: articleUrl, summary, pageText } = body;
+      const { title, customTitle, comment, url: articleUrl, summary, pageText, summaryLanguage, summaryMode } = body;
 
       const snapshotKey = `snapshots/${user.id}/snapshot-${Date.now()}.txt`;
       await env.SNAPSHOTS.put(snapshotKey, pageText || "");
@@ -2351,6 +2416,13 @@ export default {
             .bind(savedSummary.meta.last_row_id, tag.id).run();
         }
       }
+
+      await recordProductEvent(env, {
+        userId: user.id,
+        eventName: 'summary_saved',
+        summaryLanguage: String(summaryLanguage || '').toLowerCase(),
+        summaryMode: normalizeSummaryMode(summaryMode)
+      });
 
       return new Response(JSON.stringify({ success: true, prompt: await nextProductPrompt(env, user) }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
