@@ -764,7 +764,10 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
             const state = new URLSearchParams(window.location.hash.substring(1)).get('state');
             const value = state ? JSON.parse(atob(state)).returnPath : '/dashboard';
             const candidate = String(value || '');
-            return /^\/(?:dashboard|report|pricing|admin\/(?:users|analytics|reports|feedback|team|pilots))(?:\?|$)/.test(candidate) ? candidate : '/dashboard';
+            const queryStart = candidate.indexOf('?');
+            const pathname = queryStart === -1 ? candidate : candidate.slice(0, queryStart);
+            const allowedPaths = ['/dashboard', '/report', '/pricing', '/admin/users', '/admin/analytics', '/admin/reports', '/admin/feedback', '/admin/team', '/admin/pilots'];
+            return allowedPaths.indexOf(pathname) !== -1 ? candidate : '/dashboard';
           } catch {
             return '/dashboard';
           }
