@@ -781,7 +781,6 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           const params = new URLSearchParams(window.location.hash.substring(1));
           const idToken = params.get('id_token');
           if (idToken) {
-            const existingSessionToken = safeStorageGet('sessionToken');
             function finishGoogleSignIn() {
               // Use a same-origin form navigation rather than an in-page
               // background request. This is the browser equivalent of the
@@ -802,26 +801,11 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
               form.submit();
             }
 
-            // A second tab can receive a fresh Google callback while another
-            // tab is already signed in. Reuse its session instead of creating
-            // a concurrent session request.
-            if (existingSessionToken) {
-              fetch('/api/auth/verify', {
-                headers: { 'Authorization': 'Bearer ' + existingSessionToken },
-                cache: 'no-store'
-              })
-              .then(res => {
-                if (res.ok) {
-                  window.location.replace(dashboardUrlWithToken(existingSessionToken));
-                  return;
-                }
-                safeStorageRemove('sessionToken');
-                finishGoogleSignIn();
-              })
-              .catch(() => finishGoogleSignIn());
-            } else {
-              finishGoogleSignIn();
-            }
+            // A new Google callback is authoritative. Do not verify any
+            // browser-stored token first: an old token can be expired and
+            // would otherwise leave this callback waiting indefinitely.
+            safeStorageRemove('sessionToken');
+            finishGoogleSignIn();
           }
         } else {
           const savedToken = safeStorageGet('sessionToken');
