@@ -551,7 +551,16 @@ function renderUI(context) {
     chrome.storage.local.set({ summaryLanguage, summaryMode });
     const body = document.getElementById("ai-body");
     body.innerHTML = `<div style="color:#6b7280;font-size:12px;padding:8px 0;">Generating summary...</div>`;
+    let requestFinished = false;
+    const uiTimeoutId = setTimeout(() => {
+      if (requestFinished) return;
+      requestFinished = true;
+      body.innerHTML = `<div style="color:#dc2626;font-size:12px;line-height:1.5;">This summary is taking longer than expected. Please close this panel and try again.</div>`;
+    }, SUMMARY_REQUEST_TIMEOUT_MS + 5000);
     chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, pageTitle: context.title, summaryLanguage, summaryMode, sourceSections: context.sourceSections }, (data) => {
+      if (requestFinished) return;
+      requestFinished = true;
+      clearTimeout(uiTimeoutId);
       if (data?.summary) {
         planSummaryFeedbackPrompt((showSummaryFeedback) => {
           body.innerHTML = `
