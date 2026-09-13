@@ -119,6 +119,33 @@ Choose one based on evidence:
 - **Reposition:** people value summaries but not saving; simplify the product message or flow.
 - **Validate mobile demand:** if multiple active users repeatedly say desktop access is the blocker, prototype the native iOS/iPadOS Share Sheet flow described in the backlog.
 
+## Production and commercial-launch gate
+
+Do not use an installation or user-count threshold to decide when to register a business or address tax obligations. The appropriate trigger is **before accepting paid subscriptions, issuing invoices, or taking another action that begins commercial activity**. Complete this gate before turning on Stripe payments or presenting a paid plan as available.
+
+1. Confirm the operating country, legal structure, VAT/tax treatment, invoicing requirements, and any self-employed or company registrations with a qualified local accountant or tax adviser.
+2. Complete the required registrations before commercial activity begins; retain the adviser’s written guidance and the registration records.
+3. Configure Stripe with the correct legal name, bank account, tax settings, invoice details, refund policy, and support contact.
+4. Test a full paid flow in a non-production environment: checkout, invoice/receipt, failed payment, cancellation, refund, and customer support hand-off.
+5. Recheck the published terms, privacy policy, subscription disclosures, data-processing arrangements, and account-deletion flow before launch.
+
+For a Spain-based operation, the Agencia Tributaria states that registration in the census of entrepreneurs/professionals/withholders using Modelo 036 is generally made before starting an activity or operations. The exact obligations depend on the facts and legal form, so obtain Spain-specific advice before taking the first payment or business commitment. See the [AEAT census FAQs](https://sede.agenciatributaria.gob.es/Sede/censos-nif-domicilio-fiscal/tramites-censales-relacionados-empresarios-profesionales-retenedores/preguntas-frecuentes-modelos-036-037.html) and its [Modelo 036 registration guidance](https://sede.agenciatributaria.gob.es/Sede/eu_es/ayuda/manuales-videos-folletos/manuales-practicos/guia-practica-cumplimentacion-modelo-censal-036/capitulo-01-cuestiones-generales/plazos-presentacion/declaracion-alta/alta-censo-empresarios-profesionales-retenedores-036.html).
+
+## Six-month ambition: 10,000 users
+
+**10,000 registered accounts in six months is a stretch ambition, not the operating forecast.** From zero, it means roughly 55 new registrations every day for six months. Friends, manual outreach, and a Chrome Web Store listing alone will not reliably produce that volume. It becomes plausible only after Brief demonstrates a strong audience, activation, retention, and at least one scalable acquisition channel (for example, search, a creator partnership, referrals, or paid acquisition with sustainable economics).
+
+Do not define the goal simply as “users.” Track four separate measures:
+
+| Measure | Why it matters |
+| --- | --- |
+| Registered accounts | Reach, but can be vanity if people never use the product. |
+| Activated users | People who complete a first useful summary and save or share something. |
+| Weekly/monthly active users | Whether the product becomes a recurring habit. |
+| Retained users | Whether people return after week one and week four. |
+
+The committed six-month objective is to prove one repeatable channel that consistently brings relevant, activated users and to retain a meaningful share of them. Treat 10,000 registrations as a conditional upside target: promote it to an operating target only after the first channel has delivered a sustained cohort of activated, returning users. A target of 10,000 active users in six months is not a realistic planning assumption at the current stage.
+
 ## Weekly operating rhythm
 
 | When | Activity | Output |
