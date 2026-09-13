@@ -735,6 +735,8 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           const params = new URLSearchParams(window.location.hash.substring(1));
           const idToken = params.get('id_token');
           if (idToken) {
+            const existingSessionToken = safeStorageGet('sessionToken');
+            function finishGoogleSignIn() {
             const authController = new AbortController();
             const authTimeout = window.setTimeout(() => authController.abort(), 15000);
             fetch('/api/auth/google', {
@@ -770,6 +772,28 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
             .finally(() => {
               window.clearTimeout(authTimeout);
             });
+            }
+
+            // A second tab can receive a fresh Google callback while another
+            // tab is already signed in. Reuse its session instead of creating
+            // a concurrent session request.
+            if (existingSessionToken) {
+              fetch('/api/auth/verify', {
+                headers: { 'Authorization': 'Bearer ' + existingSessionToken },
+                cache: 'no-store'
+              })
+              .then(res => {
+                if (res.ok) {
+                  window.location.replace(dashboardUrlWithToken(existingSessionToken));
+                  return;
+                }
+                safeStorageRemove('sessionToken');
+                finishGoogleSignIn();
+              })
+              .catch(() => finishGoogleSignIn());
+            } else {
+              finishGoogleSignIn();
+            }
           }
         } else {
           const savedToken = safeStorageGet('sessionToken');
