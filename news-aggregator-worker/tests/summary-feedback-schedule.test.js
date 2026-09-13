@@ -10,6 +10,11 @@ const extensionFiles = [
 
 for (const extensionFile of extensionFiles) {
   const source = fs.readFileSync(extensionFile, 'utf8');
+  assert.match(
+    source,
+    /function renderUI\(context\) \{[\s\S]*?const SUMMARY_REQUEST_TIMEOUT_MS = 65000;[\s\S]*?const planSummaryFeedbackPrompt = \(callback\) =>/,
+    `The injected UI must contain its own feedback helpers in ${extensionFile}`
+  );
   const implementation = source.match(/const SUMMARY_FEEDBACK_INTERVAL_MS[\s\S]*?\n}(?=\n\nfunction escapeHtml)/);
   assert.ok(implementation, `Could not find feedback scheduling code in ${extensionFile}`);
 

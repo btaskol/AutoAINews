@@ -403,6 +403,23 @@ function injectModal(tab, isSelection, selectedText = "") {
 function renderUI(context) {
   // chrome.scripting serializes this function into the page, so helpers used
   // below must live inside it rather than relying on the service-worker scope.
+  const SUMMARY_FEEDBACK_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
+  const SUMMARY_FEEDBACK_STORAGE_KEY = "summaryFeedbackPromptState";
+  const SUMMARY_REQUEST_TIMEOUT_MS = 65000;
+  const planSummaryFeedbackPrompt = (callback) => {
+    chrome.storage.local.get({ [SUMMARY_FEEDBACK_STORAGE_KEY]: {} }, (stored) => {
+      const previous = stored[SUMMARY_FEEDBACK_STORAGE_KEY] || {};
+      const successfulSummaries = Math.max(0, Number(previous.successfulSummaries) || 0) + 1;
+      const nextPromptAt = Math.max(3, Number(previous.nextPromptAt) || 3);
+      const lastPromptAt = Math.max(0, Number(previous.lastPromptAt) || 0);
+      const now = Date.now();
+      const shouldShow = successfulSummaries >= nextPromptAt && (!lastPromptAt || now - lastPromptAt >= SUMMARY_FEEDBACK_INTERVAL_MS);
+      const nextState = shouldShow
+        ? { successfulSummaries, nextPromptAt: successfulSummaries + 10, lastPromptAt: now }
+        : { successfulSummaries, nextPromptAt, lastPromptAt };
+      chrome.storage.local.set({ [SUMMARY_FEEDBACK_STORAGE_KEY]: nextState }, () => callback(shouldShow));
+    });
+  };
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
