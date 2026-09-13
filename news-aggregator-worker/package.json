@@ -4,7 +4,8 @@
   "description": "News aggregator with AI summarization",
   "main": "src/index.js",
   "scripts": {
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test:auth-page": "node tests/auth-page.test.js"
   },
   "keywords": ["cloudflare", "worker", "ai", "news"],
   "author": "",
