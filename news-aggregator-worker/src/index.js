@@ -1056,7 +1056,10 @@ export default {
       ]);
       const metrics = Object.fromEntries((eventCounts || []).map(row => [row.event_name, row.count]));
       const successful = (eventCounts || []).find(row => row.event_name === 'summary_succeeded');
-      metrics.avg_duration_label = successful?.avg_duration_ms ? `${(Number(successful.avg_duration_ms) / 1000).toFixed(1)}s` : '—';
+      const averageDuration = Number(successful?.avg_duration_ms);
+      metrics.avg_duration_label = Number.isFinite(averageDuration) && averageDuration >= 0
+        ? `${(averageDuration / 1000).toFixed(1)}s`
+        : '—';
       metrics.helpful = feedback?.helpful || 0;
       metrics.not_helpful = feedback?.not_helpful || 0;
       return new Response(renderAdminAnalyticsPage(token, metrics, languages || [], modes || []), { headers: htmlHeaders });
