@@ -7,6 +7,7 @@ Brief is a Chrome extension and web dashboard for saving useful web content, get
 - [Architecture and session policy](docs/ARCHITECTURE.md)
 - [Release and operations guide](docs/RELEASE_AND_OPERATIONS.md)
 - [Prepared 1.0.11 release notes](docs/RELEASE_NOTES_1.0.11.md)
+- [Early-user roadmap](docs/EARLY_USER_ROADMAP.md)
 - [Pricing, limits, costs, and estimated contribution margin](PRICING_AND_LIMITS.md)
 - [Product backlog](PRODUCT_BACKLOG.md)
 
