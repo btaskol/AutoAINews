@@ -83,7 +83,7 @@ The Worker deployment and Chrome Web Store upload are separate releases.
 4. Install the Store version in a clean Chrome profile and repeat the capture, save, feedback, direct-dashboard sign-in, and sign-out tests.
 5. Record the published extension version and Worker deployment version in the release notes or commit message.
 
-For the current release, the prepared package is Brief 1.0.10. It should be uploaded only after Beta's Worker behavior is verified.
+Brief 1.0.10 is the current public Store version. Brief 1.0.11 is prepared but intentionally held while the team gathers early-user signals; see [the 1.0.11 release notes](RELEASE_NOTES_1.0.11.md) before deciding to submit it.
 
 ## Privacy and data review before a Store submission
 
