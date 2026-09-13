@@ -10,6 +10,8 @@ const extensionFiles = [
 
 for (const extensionFile of extensionFiles) {
   const source = fs.readFileSync(extensionFile, 'utf8');
+  assert.doesNotMatch(source, /chrome\.storage\.local\.clear\(/, `Signing out must preserve feedback sampling state in ${extensionFile}`);
+  assert.match(source, /function clearSignedInState\(callback\) \{\s*chrome\.storage\.local\.remove\(AUTH_STORAGE_KEYS, callback\);/, `Logout must clear only authentication data in ${extensionFile}`);
   assert.match(
     source,
     /function renderUI\(context\) \{[\s\S]*?const SUMMARY_REQUEST_TIMEOUT_MS = 65000;[\s\S]*?const planSummaryFeedbackPrompt = \(callback\) =>/,

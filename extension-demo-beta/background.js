@@ -3,6 +3,7 @@ const API_BASE = "https://beta.brieflykeep.com";
 const SUMMARY_FEEDBACK_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
 const SUMMARY_FEEDBACK_STORAGE_KEY = "summaryFeedbackPromptState";
 const SUMMARY_REQUEST_TIMEOUT_MS = 65000;
+const AUTH_STORAGE_KEYS = ["sessionToken", "user"];
 
 // Ask after the third successful summary, then after ten further summaries,
 // but never more frequently than once every fourteen days in this browser.
@@ -25,6 +26,11 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+}
+
+// Signing out must not erase local preferences or the feedback sampling state.
+function clearSignedInState(callback) {
+  chrome.storage.local.remove(AUTH_STORAGE_KEYS, callback);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -163,7 +169,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "CLEAR_TOKEN_FROM_WEB") {
-    chrome.storage.local.clear(() => {
+    clearSignedInState(() => {
       clearCardFromAllTabs();
     });
     return true;
@@ -252,7 +258,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
         if (response.status === 401) {
-          chrome.storage.local.clear(() => {
+          clearSignedInState(() => {
             clearCardFromAllTabs();
             syncDashboardLogoutTabs();
           });
@@ -287,7 +293,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "LOGOUT_USER") {
-    chrome.storage.local.clear(() => {
+    clearSignedInState(() => {
       clearCardFromAllTabs();
       syncDashboardLogoutTabs();
       sendResponse({ success: true });
