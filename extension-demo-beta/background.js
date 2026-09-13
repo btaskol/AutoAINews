@@ -2,6 +2,7 @@ const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.goo
 const API_BASE = "https://beta.brieflykeep.com";
 const SUMMARY_FEEDBACK_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
 const SUMMARY_FEEDBACK_STORAGE_KEY = "summaryFeedbackPromptState";
+const SUMMARY_REQUEST_TIMEOUT_MS = 65000;
 
 // Ask after the third successful summary, then after ten further summaries,
 // but never more frequently than once every fourteen days in this browser.
@@ -229,6 +230,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
 
       const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${token}` };
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), SUMMARY_REQUEST_TIMEOUT_MS);
       try {
         let endpoint = request.action === "SAVE_DASHBOARD"
           ? "save-dashboard"
@@ -238,6 +241,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const response = await fetch(`${API_BASE}/api/${endpoint}`, {
           method: "POST",
           headers,
+          signal: controller.signal,
           body: JSON.stringify(request.data || {
             pageText: request.pageText,
             pageTitle: request.pageTitle,
@@ -257,7 +261,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         sendResponse(await response.json());
       } catch (err) {
-        sendResponse({ error: "Server unreachable." });
+        sendResponse({ error: controller.signal.aborted ? "Summary request timed out. Please try again." : "Server unreachable." });
+      } finally {
+        clearTimeout(timeoutId);
       }
     });
     return true;

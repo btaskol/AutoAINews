@@ -214,10 +214,13 @@ async function generateStructuredSummary(env, user, periodKey, systemPrompt, use
   const modelsToTry = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
   let lastError = null;
   for (const model of modelsToTry) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
       const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           model,
           temperature: 0.1,
@@ -246,7 +249,11 @@ async function generateStructuredSummary(env, user, periodKey, systemPrompt, use
       if (structuredSummary) return { structuredSummary, error: null };
       lastError = "Model returned an incomplete structured summary.";
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Model returned an invalid structured summary.";
+      lastError = controller.signal.aborted
+        ? "The summary service took too long. Please try again."
+        : (error instanceof Error ? error.message : "Model returned an invalid structured summary.");
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
   return { structuredSummary: null, error: lastError || "No accessible models found." };
