@@ -852,17 +852,26 @@ function renderStripePricingPage(origin, user, token, env) {
     </main></body></html>`;
 }
 
-function renderAccountMenu(token, email) {
+function renderAccountMenu(token, user, env = {}) {
+  const email = user?.email || '';
   const dashboardUrl = `/dashboard?token=${encodeURIComponent(token)}`;
-  return `<div style="margin-left:auto;position:relative"><button type="button" id="briefAccountButton" style="background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;cursor:pointer;font:inherit;font-size:14px;padding:8px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(email)}</button><div id="briefAccountMenu" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 16px rgba(15,23,42,.14);display:none;min-width:160px;overflow:hidden;position:absolute;right:0;top:42px;z-index:10"><a href="${dashboardUrl}" style="color:#111827;display:block;font-size:14px;padding:10px 12px;text-decoration:none">Home</a><a href="/dashboard?action=logout" style="border-top:1px solid #e5e7eb;color:#dc2626;display:block;font-size:14px;padding:10px 12px;text-decoration:none">Sign out</a></div></div><script>(()=>{const button=document.getElementById('briefAccountButton');const menu=document.getElementById('briefAccountMenu');button?.addEventListener('click',event=>{event.stopPropagation();menu.style.display=menu.style.display==='block'?'none':'block';});document.addEventListener('click',()=>{if(menu)menu.style.display='none';});})();</script>`;
+  const item = (path, label) => `<a href="${path}?token=${encodeURIComponent(token)}" style="color:#111827;display:block;font-size:14px;padding:10px 12px;text-decoration:none">${label}</a>`;
+  const navigation = [
+    `<a href="${dashboardUrl}" style="color:#111827;display:block;font-size:14px;padding:10px 12px;text-decoration:none">Home</a>`,
+    item('/report', 'Report an issue or idea'),
+    ...(canManageFeedback(user) ? [item('/admin/feedback', 'Feedback'), item('/admin/reports', 'Reports')] : []),
+    ...(isBriefAdmin(user) ? [item('/admin/users', 'Users & activity'), item('/admin/analytics', 'Product analytics'), item('/admin/team', 'Team access'), item('/admin/pilots', 'Pilot access')] : []),
+    ...(env.PAYMENTS_ENABLED === 'true' ? [item('/pricing', 'Plans')] : [])
+  ].join('');
+  return `<div style="margin-left:auto;position:relative"><button type="button" id="briefAccountButton" style="background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;cursor:pointer;font:inherit;font-size:14px;padding:8px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(email)}</button><div id="briefAccountMenu" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 16px rgba(15,23,42,.14);display:none;min-width:220px;overflow:hidden;position:absolute;right:0;top:42px;z-index:10">${navigation}<a href="/dashboard?action=logout" style="border-top:1px solid #e5e7eb;color:#dc2626;display:block;font-size:14px;padding:10px 12px;text-decoration:none">Sign out</a></div></div><script>(()=>{const button=document.getElementById('briefAccountButton');const menu=document.getElementById('briefAccountMenu');button?.addEventListener('click',event=>{event.stopPropagation();menu.style.display=menu.style.display==='block'?'none':'block';});document.addEventListener('click',()=>{if(menu)menu.style.display='none';});})();</script>`;
 }
 
-function withAccountNavigation(html, token, email) {
+function withAccountNavigation(html, token, user, env) {
   // The dashboard and every authenticated secondary page use the same account
   // menu. Keeping it server-rendered makes Home reliable on Safari too.
   return String(html).replace(
     /<a class="back" href="[^"]*">Back to dashboard<\/a>/,
-    renderAccountMenu(token, email)
+    renderAccountMenu(token, user, env)
   );
 }
 
@@ -953,7 +962,7 @@ export default {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
       if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to view plans.', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
-      return new Response(withAccountNavigation(renderStripePricingPage(origin, user, token, env), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderStripePricingPage(origin, user, token, env), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
@@ -1090,7 +1099,7 @@ export default {
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
       if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       await touchUserActivity(env, user);
-      return new Response(withAccountNavigation(renderReportPage(token, user.email), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderReportPage(token, user.email), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/users" && req.method === "GET") {
@@ -1103,7 +1112,7 @@ export default {
         env.DB.prepare(`SELECT COUNT(*) AS total_users, SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_users_7d, SUM(CASE WHEN last_active_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END) AS active_1d, SUM(CASE WHEN last_active_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS active_7d, SUM(CASE WHEN last_active_at >= datetime('now', '-30 days') THEN 1 ELSE 0 END) AS active_30d, SUM(CASE WHEN subscription_status = 'active' THEN 1 ELSE 0 END) AS paid_users, SUM(CASE WHEN subscription_status = 'canceling' THEN 1 ELSE 0 END) AS canceling_users FROM users`).first(),
         env.DB.prepare(`SELECT u.email, u.name, u.created_at, u.last_active_at, u.subscription_status, COUNT(s.id) AS capture_count FROM users u LEFT JOIN summaries s ON s.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_active_at, u.created_at) DESC LIMIT 200`).all()
       ]);
-      return new Response(withAccountNavigation(renderAdminUsersPage(token, user.email, metrics, userList.results || []), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminUsersPage(token, user.email, metrics, userList.results || []), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/analytics" && req.method === "GET") {
@@ -1127,7 +1136,7 @@ export default {
         : '—';
       metrics.helpful = feedback?.helpful || 0;
       metrics.not_helpful = feedback?.not_helpful || 0;
-      return new Response(withAccountNavigation(renderAdminAnalyticsPage(token, user.email, metrics, languages || [], modes || [], failures || []), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminAnalyticsPage(token, user.email, metrics, languages || [], modes || [], failures || []), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/reports" && req.method === "GET") {
@@ -1137,7 +1146,7 @@ export default {
       if (!canManageFeedback(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
       const { results: reports } = await env.DB.prepare(`SELECT r.id, r.category, r.message, r.page_url, r.source, r.status, r.created_at, u.email FROM user_reports r JOIN users u ON u.id = r.user_id ORDER BY r.created_at DESC LIMIT 200`).all();
-      return new Response(withAccountNavigation(renderAdminReportsPage(token, user.email, reports || []), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminReportsPage(token, user.email, reports || []), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/feedback" && req.method === "GET") {
@@ -1158,7 +1167,7 @@ export default {
         env.DB.prepare(query).bind(...bindings).all(),
         env.DB.prepare(`SELECT COUNT(*) AS response_count, COUNT(rating) AS rating_count, ROUND(AVG(rating), 1) AS average_rating, SUM(CASE WHEN rating_comment IS NOT NULL AND rating_comment != '' THEN 1 ELSE 0 END) AS comment_count FROM user_product_feedback`).first()
       ]);
-      return new Response(withAccountNavigation(renderAdminFeedbackPage(token, user.email, metrics, responses, selectedRating, selectedUseCase, allowedUses), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminFeedbackPage(token, user.email, metrics, responses, selectedRating, selectedUseCase, allowedUses), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/team" && req.method === "GET") {
@@ -1168,7 +1177,7 @@ export default {
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
       const { results: members } = await env.DB.prepare(`SELECT email, name, CASE WHEN lower(email) = 'berkaytaskol@gmail.com' THEN 'admin' ELSE role END AS role FROM users WHERE role IN ('admin', 'feedback_reviewer') OR lower(email) = 'berkaytaskol@gmail.com' ORDER BY CASE WHEN lower(email) = 'berkaytaskol@gmail.com' OR role = 'admin' THEN 0 ELSE 1 END, email COLLATE NOCASE`).all();
-      return new Response(withAccountNavigation(renderAdminTeamPage(token, user.email, members), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminTeamPage(token, user.email, members), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/pilots" && req.method === "GET") {
@@ -1177,7 +1186,7 @@ export default {
       if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
       const { results } = await env.DB.prepare('SELECT email, created_at FROM pilot_access ORDER BY created_at DESC, email COLLATE NOCASE').all();
-      return new Response(withAccountNavigation(renderAdminPilotPage(token, user.email, results || []), token, user.email), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminPilotPage(token, user.email, results || []), token, user, env), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
