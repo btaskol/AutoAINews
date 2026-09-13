@@ -1,6 +1,7 @@
--- Sessions remain valid for 30 days at most, but require use at least once
--- every 14 days. Existing sessions start their inactivity window from when
--- they were created, which avoids extending an old session silently.
+-- Sessions remain valid for 30 days at most. The Worker requires normal
+-- accounts to be used every seven days and administrator accounts every 24
+-- hours. Existing sessions start their inactivity window from when they were
+-- created, which avoids extending an old session silently.
 ALTER TABLE user_sessions ADD COLUMN last_seen_at TIMESTAMP;
 
 UPDATE user_sessions

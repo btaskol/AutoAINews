@@ -377,16 +377,17 @@ function hasActiveSessionExpiry(value) {
   return Number.isFinite(timestamp) && timestamp > Date.now();
 }
 
-// A device session may remain open for up to 30 days, but it must be used at
-// least once every two weeks. This avoids indefinite sessions on abandoned
-// devices without unexpectedly signing out someone who is actively using Brief.
-const SESSION_IDLE_LIMIT_MS = 14 * 24 * 60 * 60 * 1000;
+// Brief accounts are signed out after seven idle days. Administrative sessions
+// have a stricter 24-hour idle window because they expose private user data.
+const USER_SESSION_IDLE_LIMIT_MS = 7 * 24 * 60 * 60 * 1000;
+const ADMIN_SESSION_IDLE_LIMIT_MS = 24 * 60 * 60 * 1000;
 
-function hasRecentSessionActivity(value) {
+function hasRecentSessionActivity(value, user) {
   const raw = String(value || '').replace(' ', 'T');
   if (!raw) return false;
   const timestamp = Date.parse(/[zZ]$/.test(raw) ? raw : `${raw}Z`);
-  return Number.isFinite(timestamp) && timestamp > Date.now() - SESSION_IDLE_LIMIT_MS;
+  const idleLimit = isBriefAdmin(user) ? ADMIN_SESSION_IDLE_LIMIT_MS : USER_SESSION_IDLE_LIMIT_MS;
+  return Number.isFinite(timestamp) && timestamp > Date.now() - idleLimit;
 }
 
 function isBriefAdmin(user) {
@@ -500,7 +501,7 @@ async function verifyTokenOrSession(authHeader, env) {
       JOIN users ON users.id = user_sessions.user_id
       WHERE user_sessions.token = ?
     `).bind(token).first();
-    if (dbUser && hasActiveSessionExpiry(dbUser.active_session_expires_at) && hasRecentSessionActivity(dbUser.active_session_last_seen_at) && await isEnvironmentAccessAllowed(env, dbUser.email)) {
+    if (dbUser && hasActiveSessionExpiry(dbUser.active_session_expires_at) && hasRecentSessionActivity(dbUser.active_session_last_seen_at, dbUser) && await isEnvironmentAccessAllowed(env, dbUser.email)) {
       await env.DB.prepare("UPDATE user_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ? AND (last_seen_at IS NULL OR last_seen_at < datetime('now', '-15 minutes'))")
         .bind(token).run().catch(() => {});
       return dbUser;
