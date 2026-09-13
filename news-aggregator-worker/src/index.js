@@ -735,12 +735,19 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           const params = new URLSearchParams(window.location.hash.substring(1));
           const idToken = params.get('id_token');
           if (idToken) {
+            const authController = new AbortController();
+            const authTimeout = window.setTimeout(() => authController.abort(), 15000);
             fetch('/api/auth/google', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ googleToken: idToken })
+              body: JSON.stringify({ googleToken: idToken }),
+              signal: authController.signal
             })
-            .then(res => res.json())
+            .then(async res => {
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) throw new Error(data.error || 'Sign-in failed (' + res.status + ').');
+              return data;
+            })
             .then(data => {
               if (data.success && data.sessionToken) {
                 // The server has already set a secure cookie. Browser storage is
@@ -754,8 +761,14 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
               }
             })
             .catch(err => {
-              showAuthFailure("Connection error: " + err.message);
+              const message = err.name === 'AbortError'
+                ? 'Sign-in is taking too long. Check your connection and try again.'
+                : 'Connection error: ' + err.message;
+              showAuthFailure(message);
               safeStorageRemove('sessionToken');
+            })
+            .finally(() => {
+              window.clearTimeout(authTimeout);
             });
           }
         } else {
