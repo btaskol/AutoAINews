@@ -24,16 +24,19 @@ const PUBLIC_SHARE_TITLE_MAX = 500;
 const PUBLIC_SHARE_SUMMARY_MAX = 30000;
 const PUBLIC_SHARE_URL_MAX = 2000;
 
-function safeDashboardReturnPath(value) {
+function safeAppReturnPath(value) {
   const candidate = String(value || '').trim();
-  if (!candidate.startsWith('/dashboard')) return '/dashboard';
+  if (!candidate.startsWith('/')) return '/dashboard';
   try {
     const parsed = new URL(candidate, 'https://brief.invalid');
-    return parsed.pathname === '/dashboard' ? `${parsed.pathname}${parsed.search}` : '/dashboard';
+    const allowedPaths = new Set(['/dashboard', '/report', '/pricing', '/admin/users', '/admin/analytics', '/admin/reports', '/admin/feedback', '/admin/team', '/admin/pilots']);
+    return allowedPaths.has(parsed.pathname) ? `${parsed.pathname}${parsed.search}` : '/dashboard';
   } catch {
     return '/dashboard';
   }
 }
+
+const safeDashboardReturnPath = safeAppReturnPath;
 
 function isPublicShareToken(value) {
   // Keep existing UUID-style links valid while using shorter, still
@@ -374,6 +377,18 @@ function hasActiveSessionExpiry(value) {
   return Number.isFinite(timestamp) && timestamp > Date.now();
 }
 
+// A device session may remain open for up to 30 days, but it must be used at
+// least once every two weeks. This avoids indefinite sessions on abandoned
+// devices without unexpectedly signing out someone who is actively using Brief.
+const SESSION_IDLE_LIMIT_MS = 14 * 24 * 60 * 60 * 1000;
+
+function hasRecentSessionActivity(value) {
+  const raw = String(value || '').replace(' ', 'T');
+  if (!raw) return false;
+  const timestamp = Date.parse(/[zZ]$/.test(raw) ? raw : `${raw}Z`);
+  return Number.isFinite(timestamp) && timestamp > Date.now() - SESSION_IDLE_LIMIT_MS;
+}
+
 function isBriefAdmin(user) {
   return user?.role === 'admin' || user?.email === 'berkaytaskol@gmail.com';
 }
@@ -418,13 +433,30 @@ const PRODUCT_EVENT_NAMES = new Set([
   'summary_saved', 'share_created', 'share_opened', 'share_copy_saved'
 ]);
 
+const SUMMARY_FAILURE_CODES = new Set([
+  'account_ineligible', 'source_unreadable', 'source_blocked',
+  'service_unavailable', 'quota_reached', 'provider_rate_limited',
+  'provider_timeout', 'provider_error', 'unexpected_error'
+]);
+
+function summaryFailureCode(error) {
+  const message = String(error || '').toLowerCase();
+  if (message.includes('no readable text')) return 'source_unreadable';
+  if (message.includes('actionable instructions')) return 'source_blocked';
+  if (message.includes('not configured') || message.includes('unavailable')) return 'service_unavailable';
+  if (message.includes('limit reached') || message.includes('quota')) return 'quota_reached';
+  if (message.includes('429') || message.includes('rate limit')) return 'provider_rate_limited';
+  if (message.includes('timeout') || message.includes('timed out')) return 'provider_timeout';
+  return message ? 'provider_error' : 'unexpected_error';
+}
+
 // Product analytics are intentionally coarse. Never put source text, titles,
 // URLs, search queries, IP addresses, or free-form feedback in this table.
-async function recordProductEvent(env, { userId = null, eventName, summaryLanguage = null, summaryMode = null, durationMs = null, shareToken = null }) {
+async function recordProductEvent(env, { userId = null, eventName, summaryLanguage = null, summaryMode = null, durationMs = null, shareToken = null, failureCode = null }) {
   if (!PRODUCT_EVENT_NAMES.has(eventName)) return;
   try {
-    await env.DB.prepare(`INSERT INTO product_events (user_id, event_name, summary_language, summary_mode, duration_ms, share_token) VALUES (?, ?, ?, ?, ?, ?)`)
-      .bind(userId || null, eventName, summaryLanguage && SUMMARY_LANGUAGE_LABELS[summaryLanguage] ? summaryLanguage : null, ['quick', 'detailed', 'standard', 'source_notes'].includes(summaryMode) ? summaryMode : null, Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null, isPublicShareToken(shareToken) ? shareToken : null)
+    await env.DB.prepare(`INSERT INTO product_events (user_id, event_name, summary_language, summary_mode, duration_ms, share_token, failure_code) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(userId || null, eventName, summaryLanguage && SUMMARY_LANGUAGE_LABELS[summaryLanguage] ? summaryLanguage : null, ['quick', 'detailed', 'standard', 'source_notes'].includes(summaryMode) ? summaryMode : null, Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null, isPublicShareToken(shareToken) ? shareToken : null, SUMMARY_FAILURE_CODES.has(failureCode) ? failureCode : null)
       .run();
   } catch (_) {
     // Analytics must never interrupt a requested summary, save, or share.
@@ -462,12 +494,18 @@ async function verifyTokenOrSession(authHeader, env) {
 
   try {
     const dbUser = await env.DB.prepare(`
-      SELECT users.*, user_sessions.expires_at AS active_session_expires_at
+      SELECT users.*, user_sessions.expires_at AS active_session_expires_at,
+        user_sessions.last_seen_at AS active_session_last_seen_at
       FROM user_sessions
       JOIN users ON users.id = user_sessions.user_id
       WHERE user_sessions.token = ?
     `).bind(token).first();
-    if (dbUser && hasActiveSessionExpiry(dbUser.active_session_expires_at) && await isEnvironmentAccessAllowed(env, dbUser.email)) return dbUser;
+    if (dbUser && hasActiveSessionExpiry(dbUser.active_session_expires_at) && hasRecentSessionActivity(dbUser.active_session_last_seen_at) && await isEnvironmentAccessAllowed(env, dbUser.email)) {
+      await env.DB.prepare("UPDATE user_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ? AND (last_seen_at IS NULL OR last_seen_at < datetime('now', '-15 minutes'))")
+        .bind(token).run().catch(() => {});
+      return dbUser;
+    }
+    if (dbUser) await env.DB.prepare('DELETE FROM user_sessions WHERE token = ?').bind(token).run().catch(() => {});
   } catch (e) {}
 
   // Sessions created before the device-session migration remain valid until
@@ -673,7 +711,8 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           try {
             const state = new URLSearchParams(window.location.hash.substring(1)).get('state');
             const value = state ? JSON.parse(atob(state)).returnPath : '/dashboard';
-            return String(value || '').startsWith('/dashboard') ? value : '/dashboard';
+            const candidate = String(value || '');
+            return /^\/(?:dashboard|report|pricing|admin\/(?:users|analytics|reports|feedback|team|pilots))(?:\?|$)/.test(candidate) ? candidate : '/dashboard';
           } catch {
             return '/dashboard';
           }
@@ -721,7 +760,7 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         } else {
           const savedToken = safeStorageGet('sessionToken');
           if (savedToken && !window.location.search.includes('token')) {
-            const target = ${JSON.stringify(safeDashboardReturnPath(returnPath))};
+            const target = ${JSON.stringify(safeAppReturnPath(returnPath))};
             window.location.href = target + (target.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(savedToken);
           }
         }
@@ -729,6 +768,13 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
     </body>
     </html>
   `;
+}
+
+function signInRequiredResponse(origin, env, returnPath) {
+  return new Response(
+    renderMinimalAuthPage(origin, 'Your session ended. Sign in again to continue.', true, env.CHROME_WEB_STORE_URL, env, safeAppReturnPath(returnPath)),
+    { headers: { ...htmlHeaders, 'Set-Cookie': briefSessionCookie('', true) } }
+  );
 }
 
 function renderPublicSharePage(origin, share) {
@@ -749,7 +795,7 @@ function renderLegalPage(origin, page) {
     <ul>
       <li><strong>Account information:</strong> your Google account ID, email address, name, and profile image supplied when you choose to sign in with Google.</li>
       <li><strong>Content you choose to capture:</strong> page URLs, page or selected text, page titles, generated summaries, tags, notes, and pins. Do not capture content you are not permitted to share or process.</li>
-      <li><strong>Service and support information:</strong> summary-language preference, quota and usage records, your most recent meaningful activity, ratings, optional feedback, and issue reports (including an optional page URL). We also record coarse product events—such as a summary request succeeding or failing, request duration, saving, sharing, and a shared link being opened or saved—to improve reliability and understand feature use. These product-event records do not contain captured page text, page titles, source URLs, search queries, age, gender, or precise location.</li>
+      <li><strong>Service and support information:</strong> summary-language preference, quota and usage records, your most recent meaningful activity, ratings, optional feedback, and issue reports (including an optional page URL). We also record coarse product events—such as a summary request succeeding or failing, request duration, saving, sharing, and a shared link being opened or saved—to improve reliability and understand feature use. If a summary fails, we may link a safe failure category to your account so we can identify repeated service issues. We do not store raw provider errors in these records. Product-event records do not contain captured page text, page titles, source URLs, search queries, age, gender, or precise location.</li>
       <li><strong>Session information:</strong> an authentication session cookie and local browser storage needed to keep you signed in and remember display preferences.</li>
     </ul>
     <h2>How we use it</h2>
@@ -805,7 +851,21 @@ function renderStripePricingPage(origin, user, token, env) {
     </main></body></html>`;
 }
 
-function renderAdminFeedbackPage(token, metrics, responses, selectedRating, selectedUseCase, useCases) {
+function renderAccountMenu(token, email) {
+  const dashboardUrl = `/dashboard?token=${encodeURIComponent(token)}`;
+  return `<div style="margin-left:auto;position:relative"><button type="button" id="briefAccountButton" style="background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;cursor:pointer;font:inherit;font-size:14px;padding:8px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(email)}</button><div id="briefAccountMenu" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 16px rgba(15,23,42,.14);display:none;min-width:160px;overflow:hidden;position:absolute;right:0;top:42px;z-index:10"><a href="${dashboardUrl}" style="color:#111827;display:block;font-size:14px;padding:10px 12px;text-decoration:none">Home</a><a href="/dashboard?action=logout" style="border-top:1px solid #e5e7eb;color:#dc2626;display:block;font-size:14px;padding:10px 12px;text-decoration:none">Sign out</a></div></div><script>(()=>{const button=document.getElementById('briefAccountButton');const menu=document.getElementById('briefAccountMenu');button?.addEventListener('click',event=>{event.stopPropagation();menu.style.display=menu.style.display==='block'?'none':'block';});document.addEventListener('click',()=>{if(menu)menu.style.display='none';});})();</script>`;
+}
+
+function withAccountNavigation(html, token, email) {
+  // The dashboard and every authenticated secondary page use the same account
+  // menu. Keeping it server-rendered makes Home reliable on Safari too.
+  return String(html).replace(
+    /<a class="back" href="[^"]*">Back to dashboard<\/a>/,
+    renderAccountMenu(token, email)
+  );
+}
+
+function renderAdminFeedbackPage(token, email, metrics, responses, selectedRating, selectedUseCase, useCases) {
   const average = metrics?.rating_count ? `${Number(metrics.average_rating || 0).toFixed(1)} / 5` : '—';
   const statuses = ['new', 'reviewing', 'planned', 'done'];
   const rows = responses.length ? responses.map(response => `
@@ -814,34 +874,35 @@ function renderAdminFeedbackPage(token, metrics, responses, selectedRating, sele
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Feedback — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:860px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small,.empty-comment{color:#6b7280;font-size:13px}.metrics{display:grid;gap:12px;grid-template-columns:repeat(3,1fr);margin:22px 0}.metric,.response,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.metric strong{display:block;font-size:24px;margin-top:5px}.filters{align-items:end;display:flex;gap:10px;margin:22px 0}.filters label{color:#4b5563;display:grid;font-size:12px;gap:5px}.filters select,.filters button,.review-status{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:8px}.filters button{background:#111827;color:#fff;cursor:pointer}.response{margin:12px 0}.response-top{align-items:center;display:flex;justify-content:space-between;gap:12px}.response-top strong{display:block}.pills{display:flex;gap:8px;margin:12px 0}.pills span{background:#eff6ff;border-radius:999px;color:#1d4ed8;font-size:12px;padding:4px 8px}.comment{line-height:1.55;white-space:pre-wrap}@media(max-width:600px){.metrics{grid-template-columns:1fr}.filters{align-items:stretch;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Feedback</h1><p class="muted">Private customer feedback — visible only to authorized Brief team members.</p><section class="metrics"><div class="metric"><span class="muted">Responses</span><strong>${metrics?.response_count || 0}</strong></div><div class="metric"><span class="muted">Average rating</span><strong>${average}</strong></div><div class="metric"><span class="muted">Written comments</span><strong>${metrics?.comment_count || 0}</strong></div></section><form class="filters" method="get"><input type="hidden" name="token" value="${escapeHtml(token)}"><label>Rating<select name="rating"><option value="">All ratings</option>${[1,2,3,4,5].map(rating => `<option value="${rating}"${String(rating) === selectedRating ? ' selected' : ''}>${rating} star${rating === 1 ? '' : 's'}</option>`).join('')}</select></label><label>Use case<select name="use_case"><option value="">All use cases</option>${useCases.map(useCase => `<option value="${escapeHtml(useCase)}"${useCase === selectedUseCase ? ' selected' : ''}>${escapeHtml(useCase.replace(/_/g, ' '))}</option>`).join('')}</select></label><button type="submit">Apply filters</button></form><section>${rows}</section></main><script>document.querySelectorAll('.review-status').forEach(select=>select.addEventListener('change',async()=>{const res=await fetch('/api/admin/feedback/status',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer ${token}'},body:JSON.stringify({userId:select.dataset.userId,status:select.value})});if(!res.ok)alert('Could not update feedback status.');}));</script></body></html>`;
 }
 
-function renderAdminTeamPage(token, members) {
+function renderAdminTeamPage(token, email, members) {
   const rows = members.length ? members.map(member => `
     <article class="member"><div><strong>${escapeHtml(member.name || member.email)}</strong><small>${escapeHtml(member.email)}</small></div><label>Role<select class="member-role" data-email="${escapeHtml(member.email)}"><option value="admin"${member.role === 'admin' ? ' selected' : ''}>Admin</option><option value="feedback_reviewer"${member.role === 'feedback_reviewer' ? ' selected' : ''}>Feedback reviewer</option><option value="user"${member.role === 'user' ? ' selected' : ''}>Remove access</option></select></label></article>`).join('') : '<div class="empty">No additional team members yet.</div>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team access — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.card,.member,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.grant{display:grid;gap:10px;grid-template-columns:1fr 180px auto;margin:22px 0}.grant input,.grant select,.grant button,.member select{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:9px}.grant button{background:#111827;color:#fff;cursor:pointer}.member{align-items:center;display:flex;justify-content:space-between;margin:10px 0}.member strong,.member small{display:block}.member label{color:#6b7280;display:grid;font-size:12px;gap:5px}.notice{color:#b91c1c;font-size:13px;margin-top:8px}@media(max-width:600px){.grant{grid-template-columns:1fr}.member{align-items:flex-start;gap:12px;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Team access</h1><p class="muted">Grant access inside Brief without giving anyone Cloudflare, Stripe, deployment, or secret-key permissions. People must sign in to Brief once before you can add them.</p><section class="card"><strong>Grant access</strong><form class="grant" id="grant-form"><input id="invite-email" type="email" placeholder="teammate@example.com" required><select id="invite-role"><option value="feedback_reviewer">Feedback reviewer</option><option value="admin">Admin</option></select><button type="submit">Grant access</button></form><div id="notice" class="notice" role="status"></div></section><section><h2>People with access</h2>${rows}</section></main><script>const token=${JSON.stringify(token)};const notice=document.getElementById('notice');async function setRole(email,role){const res=await fetch('/api/admin/team',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({email,role})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not update access.');}document.getElementById('grant-form').addEventListener('submit',async event=>{event.preventDefault();notice.textContent='';try{await setRole(document.getElementById('invite-email').value,document.getElementById('invite-role').value);window.location.reload();}catch(error){notice.textContent=error.message;}});document.querySelectorAll('.member-role').forEach(select=>select.addEventListener('change',async()=>{notice.textContent='';try{await setRole(select.dataset.email,select.value);window.location.reload();}catch(error){notice.textContent=error.message;}}));</script></body></html>`;
 }
 
-function renderAdminPilotPage(token, participants) {
+function renderAdminPilotPage(token, email, participants) {
   const rows = participants.length ? participants.map(person => `<article class="person"><div><strong>${escapeHtml(person.email)}</strong><small>Added ${escapeHtml(formatMadridTime(person.created_at))}</small></div><button data-email="${escapeHtml(person.email)}" class="revoke">Remove</button></article>`).join('') : '<div class="empty">No pilot users have been invited yet.</div>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pilot access — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:760px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.card,.person,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px}.grant{display:flex;gap:10px;margin:18px 0}.grant input,.grant button,.revoke{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:9px}.grant input{flex:1}.grant button{background:#111827;color:#fff;cursor:pointer}.person{align-items:center;display:flex;justify-content:space-between;margin:10px 0}.person strong,.person small{display:block}.revoke{color:#b91c1c;cursor:pointer}.notice{color:#b91c1c;font-size:13px;margin-top:8px}@media(max-width:600px){.grant{flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Pilot access</h1><p class="muted">Only listed emails can sign in when this environment uses invitation-only access. Removing someone ends access on their next request.</p><section class="card"><strong>Invite a pilot user</strong><form class="grant" id="grant-form"><input id="email" type="email" placeholder="pilot@example.com" required><button type="submit">Add access</button></form><div id="notice" class="notice" role="status"></div></section><section><h2>Invited users</h2>${rows}</section></main><script>const token=${JSON.stringify(token)};const notice=document.getElementById('notice');async function change(email,action){const res=await fetch('/api/admin/pilots',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({email,action})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not update access.');}document.getElementById('grant-form').addEventListener('submit',async e=>{e.preventDefault();notice.textContent='';try{await change(document.getElementById('email').value,'add');window.location.reload();}catch(error){notice.textContent=error.message;}});document.querySelectorAll('.revoke').forEach(button=>button.addEventListener('click',async()=>{notice.textContent='';try{await change(button.dataset.email,'remove');window.location.reload();}catch(error){notice.textContent=error.message;}}));</script></body></html>`;
 }
 
-function renderReportPage(token) {
+function renderReportPage(token, email) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report an issue — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:640px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted{color:#6b7280;font-size:14px;line-height:1.55}.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-top:22px;padding:18px}label{display:grid;font-size:13px;font-weight:600;gap:6px;margin:14px 0}input,select,textarea,button{background:#fff;border:1px solid #d1d5db;border-radius:6px;color:#111827;font:inherit;padding:10px}textarea{min-height:130px;resize:vertical}button{background:#111827;color:#fff;cursor:pointer;font-weight:600}.notice{font-size:13px;margin:12px 0;min-height:18px}.success{color:#047857}.error{color:#b91c1c}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Report an issue or share an idea</h1><p class="muted">Send a short report to the Brief team. Your saved articles and summary content are not included automatically.</p><form class="card" id="report-form"><label>Type<select id="category"><option value="bug">Bug</option><option value="idea">Idea</option><option value="question">Question</option></select></label><label>What happened or what would help?<textarea id="message" maxlength="1000" required placeholder="Up to 1,000 characters"></textarea></label><label>Affected page URL (optional)<input id="page-url" type="url" maxlength="2000" placeholder="https://..."></label><div id="notice" class="notice" role="status"></div><button type="submit">Send report</button></form></main><script>const token=${JSON.stringify(token)};const form=document.getElementById('report-form');const notice=document.getElementById('notice');form.addEventListener('submit',async event=>{event.preventDefault();notice.className='notice';notice.textContent='Sending…';try{const res=await fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({category:document.getElementById('category').value,message:document.getElementById('message').value,pageUrl:document.getElementById('page-url').value,source:'dashboard'})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||'Could not send the report.');form.reset();notice.className='notice success';notice.textContent='Thank you — your report was sent.';}catch(error){notice.className='notice error';notice.textContent=error.message;}});</script></body></html>`;
 }
 
-function renderAdminUsersPage(token, metrics, users) {
+function renderAdminUsersPage(token, email, metrics, users) {
   const rows = users.length ? users.map(row => { const plan = row.subscription_status === 'active' ? 'Pro' : row.subscription_status === 'canceling' ? 'Canceling' : 'Free'; return `<tr><td><strong>${escapeHtml(row.name || row.email)}</strong><small>${escapeHtml(row.email)}</small></td><td>${plan}</td><td>${row.capture_count || 0}</td><td>${formatMadridTime(row.last_active_at)}</td><td>${formatMadridTime(row.created_at)}</td></tr>`; }).join('') : '<tr><td colspan="5">No users yet.</td></tr>';
   const metric = (label, value) => `<div class="metric"><span>${label}</span><strong>${Number(value || 0)}</strong></div>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Users & activity — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:1050px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.metrics{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:22px 0}.metric{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.metric span{color:#6b7280;font-size:12px}.metric strong{display:block;font-size:24px;margin-top:5px}.table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e7eb;font-size:13px;padding:12px;text-align:left;white-space:nowrap}th{color:#6b7280;font-size:12px}td small{display:block;margin-top:3px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}body{padding:20px 12px}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Users & activity</h1><p class="muted">Activity is based on a user’s most recent meaningful Brief request, updated at most once every 15 minutes. It is not live online/offline tracking. Times are shown in Madrid time.</p><section class="metrics">${metric('All users',metrics.total_users)}${metric('New in 7 days',metrics.new_users_7d)}${metric('Active in 1 day',metrics.active_1d)}${metric('Active in 7 days',metrics.active_7d)}${metric('Active in 30 days',metrics.active_30d)}${metric('Pro members',metrics.paid_users)}${metric('Canceling',metrics.canceling_users)}</section><div class="table-wrap"><table><thead><tr><th>User</th><th>Plan</th><th>Captures</th><th>Last active (Madrid)</th><th>Joined (Madrid)</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
 }
 
-function renderAdminAnalyticsPage(token, metrics, languages, modes) {
+function renderAdminAnalyticsPage(token, email, metrics, languages, modes, failures) {
   const metric = (label, value) => `<div class="metric"><span>${label}</span><strong>${typeof value === 'string' ? value : Number(value || 0)}</strong></div>`;
   const rows = (items, label) => items.length ? items.map(item => `<tr><td>${escapeHtml(item[label] || 'Not specified')}</td><td>${Number(item.count || 0)}</td></tr>`).join('') : '<tr><td colspan="2">No data yet.</td></tr>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Product analytics — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:960px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted{color:#6b7280;font-size:13px;line-height:1.55}.metrics{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:22px 0}.metric,.table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.metric span{color:#6b7280;font-size:12px}.metric strong{display:block;font-size:24px;margin-top:5px}.grids{display:grid;gap:16px;grid-template-columns:1fr 1fr}.table-wrap{overflow:auto;padding:0}h2{font-size:16px;margin:0 0 10px}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e7eb;font-size:13px;padding:12px;text-align:left}th{color:#6b7280;font-size:12px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.grids{grid-template-columns:1fr}body{padding:20px 12px}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Product analytics</h1><p class="muted">Last 30 days. These are aggregate product events only: Brief does not put saved page content, URLs, search queries, age, gender, or location in analytics.</p><section class="metrics">${metric('Summary requests', metrics.summary_requested)}${metric('Successful summaries', metrics.summary_succeeded)}${metric('Failed summaries', metrics.summary_failed)}${metric('Average summary time', metrics.avg_duration_label)}${metric('Saved summaries', metrics.summary_saved)}${metric('Shares created', metrics.share_created)}${metric('Shared-link opens', metrics.share_opened)}${metric('Copies saved', metrics.share_copy_saved)}${metric('Helpful', metrics.helpful)}${metric('Not helpful', metrics.not_helpful)}</section><section class="grids"><div><h2>Summary language</h2><div class="table-wrap"><table><thead><tr><th>Language</th><th>Successful summaries</th></tr></thead><tbody>${rows(languages, 'summary_language')}</tbody></table></div></div><div><h2>Summary format</h2><div class="table-wrap"><table><thead><tr><th>Format</th><th>Successful summaries</th></tr></thead><tbody>${rows(modes, 'summary_mode')}</tbody></table></div></div></section></main></body></html>`;
+  const failureRows = failures.length ? failures.map(failure => `<tr><td>${escapeHtml(failure.email || 'Deleted account')}</td><td>${escapeHtml(String(failure.failure_code || 'unexpected_error').replace(/_/g, ' '))}</td><td>${formatMadridTime(failure.created_at)}</td></tr>`).join('') : '<tr><td colspan="3">No failed summaries in the last 30 days.</td></tr>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Product analytics — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:960px}.top{align-items:center;display:flex;gap:12px;margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back{color:#2563eb;margin-left:auto;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted{color:#6b7280;font-size:13px;line-height:1.55}.metrics{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:22px 0}.metric,.table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.metric span{color:#6b7280;font-size:12px}.metric strong{display:block;font-size:24px;margin-top:5px}.grids{display:grid;gap:16px;grid-template-columns:1fr 1fr}.table-wrap{overflow:auto;padding:0}h2{font-size:16px;margin:24px 0 10px}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #e5e7eb;font-size:13px;padding:12px;text-align:left}th{color:#6b7280;font-size:12px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.grids{grid-template-columns:1fr}body{padding:20px 12px}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Product analytics</h1><p class="muted">Last 30 days. Brief records only coarse events. A failed summary includes the signed-in account and a safe failure category for support; it never includes saved page content, URLs, search queries, or raw provider errors.</p><section class="metrics">${metric('Summary requests', metrics.summary_requested)}${metric('Successful summaries', metrics.summary_succeeded)}${metric('Failed summaries', metrics.summary_failed)}${metric('Average summary time', metrics.avg_duration_label)}${metric('Saved summaries', metrics.summary_saved)}${metric('Shares created', metrics.share_created)}${metric('Shared-link opens', metrics.share_opened)}${metric('Copies saved', metrics.share_copy_saved)}${metric('Helpful', metrics.helpful)}${metric('Not helpful', metrics.not_helpful)}</section><section class="grids"><div><h2>Summary language</h2><div class="table-wrap"><table><thead><tr><th>Language</th><th>Successful summaries</th></tr></thead><tbody>${rows(languages, 'summary_language')}</tbody></table></div></div><div><h2>Summary format</h2><div class="table-wrap"><table><thead><tr><th>Format</th><th>Successful summaries</th></tr></thead><tbody>${rows(modes, 'summary_mode')}</tbody></table></div></div></section><section><h2>Recent summary problems</h2><div class="table-wrap"><table><thead><tr><th>Account</th><th>Safe category</th><th>Time (Madrid)</th></tr></thead><tbody>${failureRows}</tbody></table></div></section></main></body></html>`;
 }
 
-function renderAdminReportsPage(token, reports) {
+function renderAdminReportsPage(token, email, reports) {
   const rows = reports.length ? reports.map(report => `<article class="report"><div class="head"><div><strong>${escapeHtml(report.email)}</strong><small>${escapeHtml(report.category)} · ${escapeHtml(report.source)} · ${formatMadridTime(report.created_at)}</small></div><label>Status<select class="status" data-id="${report.id}">${['new','reviewing','planned','resolved'].map(status => `<option value="${status}"${status === report.status ? ' selected' : ''}>${status}</option>`).join('')}</select></label></div><p>${escapeHtml(report.message)}</p>${report.page_url ? `<a href="${escapeHtml(report.page_url)}" target="_blank" rel="noopener noreferrer">Open reported page ↗</a>` : ''}</article>`).join('') : '<div class="empty">No reports yet.</div>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reports — Brief</title><style>body{background:#fcfcfc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;margin:0;padding:36px 20px}.wrap{margin:auto;max-width:850px}.top,.head{align-items:center;display:flex;gap:12px;justify-content:space-between}.top{margin-bottom:28px}.mark{align-items:center;background:#111827;border-radius:7px;color:#fff;display:flex;font-weight:700;height:28px;justify-content:center;width:28px}.back,a{color:#2563eb;text-decoration:none;font-size:14px}h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}.muted,small{color:#6b7280;font-size:13px}.report,.empty{background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin:12px 0;padding:16px}.report p{line-height:1.55;white-space:pre-wrap}.head strong,.head small{display:block}.head label{color:#6b7280;display:grid;font-size:12px;gap:5px}.status{background:#fff;border:1px solid #d1d5db;border-radius:6px;font:inherit;padding:7px}@media(max-width:600px){.head{align-items:flex-start;flex-direction:column}}</style></head><body><main class="wrap"><div class="top"><div class="mark">B</div><strong>Brief</strong><a class="back" href="/dashboard?token=${encodeURIComponent(token)}">Back to dashboard</a></div><h1>Reports</h1><p class="muted">Private reports from Brief users. Saved article content is never included automatically.</p><section>${rows}</section></main><script>const token=${JSON.stringify(token)};document.querySelectorAll('.status').forEach(select=>select.addEventListener('change',async()=>{const res=await fetch('/api/admin/reports/status',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({id:select.dataset.id,status:select.value})});if(!res.ok)alert('Could not update report status.');}));</script></body></html>`;
 }
@@ -891,7 +952,7 @@ export default {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
       if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to view plans.', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
-      return new Response(renderStripePricingPage(origin, user, token, env), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderStripePricingPage(origin, user, token, env), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
@@ -947,8 +1008,8 @@ export default {
             last_active_at = CURRENT_TIMESTAMP
         `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
         await env.DB.prepare(`
-          INSERT INTO user_sessions (token, user_id, expires_at)
-          VALUES (?, ?, ?)
+          INSERT INTO user_sessions (token, user_id, expires_at, last_seen_at)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         `).bind(appSessionToken, googleUser.sub, sessionExpiresAt).run();
 
         const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
@@ -1026,33 +1087,36 @@ export default {
     if (url.pathname === "/report" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
-      if (!user) return new Response(renderMinimalAuthPage(origin, 'Sign in to send a report.', false, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       await touchUserActivity(env, user);
-      return new Response(renderReportPage(token), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderReportPage(token, user.email), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/users" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
       const [metrics, userList] = await Promise.all([
         env.DB.prepare(`SELECT COUNT(*) AS total_users, SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_users_7d, SUM(CASE WHEN last_active_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END) AS active_1d, SUM(CASE WHEN last_active_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS active_7d, SUM(CASE WHEN last_active_at >= datetime('now', '-30 days') THEN 1 ELSE 0 END) AS active_30d, SUM(CASE WHEN subscription_status = 'active' THEN 1 ELSE 0 END) AS paid_users, SUM(CASE WHEN subscription_status = 'canceling' THEN 1 ELSE 0 END) AS canceling_users FROM users`).first(),
         env.DB.prepare(`SELECT u.email, u.name, u.created_at, u.last_active_at, u.subscription_status, COUNT(s.id) AS capture_count FROM users u LEFT JOIN summaries s ON s.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_active_at, u.created_at) DESC LIMIT 200`).all()
       ]);
-      return new Response(renderAdminUsersPage(token, metrics, userList.results || []), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminUsersPage(token, user.email, metrics, userList.results || []), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/analytics" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
-      const [{ results: eventCounts }, { results: languages }, { results: modes }, feedback] = await Promise.all([
+      const [{ results: eventCounts }, { results: languages }, { results: modes }, feedback, { results: failures }] = await Promise.all([
         env.DB.prepare(`SELECT event_name, COUNT(*) AS count, AVG(duration_ms) AS avg_duration_ms FROM product_events WHERE created_at >= datetime('now', '-30 days') GROUP BY event_name`).all(),
         env.DB.prepare(`SELECT summary_language, COUNT(*) AS count FROM product_events WHERE event_name = 'summary_succeeded' AND created_at >= datetime('now', '-30 days') GROUP BY summary_language ORDER BY count DESC`).all(),
         env.DB.prepare(`SELECT summary_mode, COUNT(*) AS count FROM product_events WHERE event_name = 'summary_succeeded' AND created_at >= datetime('now', '-30 days') GROUP BY summary_mode ORDER BY count DESC`).all(),
-        env.DB.prepare(`SELECT SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END) AS helpful, SUM(CASE WHEN helpful = 0 THEN 1 ELSE 0 END) AS not_helpful FROM summary_feedback WHERE created_at >= datetime('now', '-30 days')`).first()
+        env.DB.prepare(`SELECT SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END) AS helpful, SUM(CASE WHEN helpful = 0 THEN 1 ELSE 0 END) AS not_helpful FROM summary_feedback WHERE created_at >= datetime('now', '-30 days')`).first(),
+        env.DB.prepare(`SELECT users.email, product_events.failure_code, product_events.created_at FROM product_events LEFT JOIN users ON users.id = product_events.user_id WHERE product_events.event_name = 'summary_failed' AND product_events.created_at >= datetime('now', '-30 days') ORDER BY product_events.created_at DESC LIMIT 50`).all()
       ]);
       const metrics = Object.fromEntries((eventCounts || []).map(row => [row.event_name, row.count]));
       const successful = (eventCounts || []).find(row => row.event_name === 'summary_succeeded');
@@ -1062,21 +1126,23 @@ export default {
         : '—';
       metrics.helpful = feedback?.helpful || 0;
       metrics.not_helpful = feedback?.not_helpful || 0;
-      return new Response(renderAdminAnalyticsPage(token, metrics, languages || [], modes || []), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminAnalyticsPage(token, user.email, metrics, languages || [], modes || [], failures || []), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/reports" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!canManageFeedback(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
       const { results: reports } = await env.DB.prepare(`SELECT r.id, r.category, r.message, r.page_url, r.source, r.status, r.created_at, u.email FROM user_reports r JOIN users u ON u.id = r.user_id ORDER BY r.created_at DESC LIMIT 200`).all();
-      return new Response(renderAdminReportsPage(token, reports || []), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminReportsPage(token, user.email, reports || []), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/feedback" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!canManageFeedback(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
       const selectedRating = ['1', '2', '3', '4', '5'].includes(url.searchParams.get('rating')) ? url.searchParams.get('rating') : '';
@@ -1091,24 +1157,26 @@ export default {
         env.DB.prepare(query).bind(...bindings).all(),
         env.DB.prepare(`SELECT COUNT(*) AS response_count, COUNT(rating) AS rating_count, ROUND(AVG(rating), 1) AS average_rating, SUM(CASE WHEN rating_comment IS NOT NULL AND rating_comment != '' THEN 1 ELSE 0 END) AS comment_count FROM user_product_feedback`).first()
       ]);
-      return new Response(renderAdminFeedbackPage(token, metrics, responses, selectedRating, selectedUseCase, allowedUses), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminFeedbackPage(token, user.email, metrics, responses, selectedRating, selectedUseCase, allowedUses), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/team" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
       await touchUserActivity(env, user);
       const { results: members } = await env.DB.prepare(`SELECT email, name, CASE WHEN lower(email) = 'berkaytaskol@gmail.com' THEN 'admin' ELSE role END AS role FROM users WHERE role IN ('admin', 'feedback_reviewer') OR lower(email) = 'berkaytaskol@gmail.com' ORDER BY CASE WHEN lower(email) = 'berkaytaskol@gmail.com' OR role = 'admin' THEN 0 ELSE 1 END, email COLLATE NOCASE`).all();
-      return new Response(renderAdminTeamPage(token, members), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminTeamPage(token, user.email, members), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/admin/pilots" && req.method === "GET") {
       const token = url.searchParams.get('token');
       const user = token ? await verifyTokenOrSession(`Bearer ${token}`, env) : null;
+      if (!user) return signInRequiredResponse(origin, env, `${url.pathname}${url.search}`);
       if (!isBriefAdmin(user)) return new Response('Not found', { status: 404 });
       const { results } = await env.DB.prepare('SELECT email, created_at FROM pilot_access ORDER BY created_at DESC, email COLLATE NOCASE').all();
-      return new Response(renderAdminPilotPage(token, results || []), { headers: htmlHeaders });
+      return new Response(withAccountNavigation(renderAdminPilotPage(token, user.email, results || []), token, user.email), { headers: htmlHeaders });
     }
 
     if (url.pathname === "/dashboard" && req.method === "GET") {
@@ -1471,6 +1539,7 @@ export default {
               <div class="profile-dropdown">
                 <button class="btn-secondary" id="profBtn">${escapeHtml(user.email)}</button>
                 <div class="dropdown-menu" id="profMenu">
+                  <button class="dropdown-item" id="homeBtn">Home</button>
                   ${reportBtnHtml}
                   ${adminFeedbackBtnHtml}
                   ${adminReportsBtnHtml}
@@ -1820,6 +1889,8 @@ export default {
             };
 
             const feedbackBtn = document.getElementById('feedbackBtn');
+            const homeBtn = document.getElementById('homeBtn');
+            if (homeBtn) homeBtn.onclick = () => { window.location.href = '/dashboard?token=${encodeURIComponent(token)}'; };
             if (feedbackBtn) feedbackBtn.onclick = () => { window.location.href = '/admin/feedback?token=${encodeURIComponent(token)}'; };
             const reportBtn = document.getElementById('reportBtn');
             if (reportBtn) reportBtn.onclick = () => { window.location.href = '/report?token=${encodeURIComponent(token)}'; };
@@ -2129,6 +2200,7 @@ export default {
 
     if (url.pathname === "/api/extension-capture" && req.method === "POST") {
       if (!trialInfo.allowed) {
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', failureCode: 'account_ineligible' });
         return new Response(JSON.stringify({
           error: "Your account is not eligible to generate summaries."
         }), { status: 402, headers: corsHeaders });
@@ -2149,20 +2221,27 @@ export default {
       const sourceText = sourcePlan.sourceText;
       const sourceTitle = String(pageTitle || '').replace(/\s+/g, ' ').trim().slice(0, 500);
       const targetLanguage = summaryLanguageLabel(summaryLanguage);
-      if (!sourceText) return new Response(JSON.stringify({ error: "No readable text was provided" }), { status: 400, headers: corsHeaders });
+      if (!sourceText) {
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt, failureCode: 'source_unreadable' });
+        return new Response(JSON.stringify({ error: "No readable text was provided" }), { status: 400, headers: corsHeaders });
+      }
       if (containsActionableHarmfulInstructions(sourceText)) {
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt, failureCode: 'source_blocked' });
         return new Response(JSON.stringify({
           error: "Brief does not process sources containing actionable instructions for harm, exploitation, or abuse. News and high-level analysis are supported when operational details are removed.",
           safetyBlocked: true
         }), { status: 422, headers: corsHeaders });
       }
-      if (!env.GROQ_API_KEY) return new Response(JSON.stringify({ error: "Summary service is not configured." }), { status: 503, headers: corsHeaders });
+      if (!env.GROQ_API_KEY) {
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt, failureCode: 'service_unavailable' });
+        return new Response(JSON.stringify({ error: "Summary service is not configured." }), { status: 503, headers: corsHeaders });
+      }
 
       await recordProductEvent(env, { userId: user.id, eventName: 'summary_requested', summaryLanguage: selectedLanguage, summaryMode: mode });
 
       const quota = await reserveSummaryQuota(env, user);
       if (!quota.allowed) {
-        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt, failureCode: 'quota_reached' });
         const planName = user?.subscription_status === 'active' ? 'Pro' : 'Free';
         return new Response(JSON.stringify({
           error: `${planName} summary limit reached. Please wait for the next billing month or upgrade your plan.`,
@@ -2252,7 +2331,7 @@ export default {
 
         if (!summary) {
           await releaseSummaryQuota(env, user, quota.periodKey);
-          await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
+          await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt, failureCode: summaryFailureCode(lastError) });
           return new Response(JSON.stringify({ error: "Groq Error: " + (lastError || "No accessible models found.") }), { status: 500, headers: corsHeaders });
         }
 
@@ -2260,7 +2339,7 @@ export default {
         return new Response(JSON.stringify({ summary, title: generatedTitle || fallbackTitleFromSummary(summary) || sourceTitle || null }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
       } catch (err) {
         await releaseSummaryQuota(env, user, quota.periodKey);
-        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt });
+        await recordProductEvent(env, { userId: user.id, eventName: 'summary_failed', summaryLanguage: selectedLanguage, summaryMode: mode, durationMs: Date.now() - summaryStartedAt, failureCode: summaryFailureCode(err?.message) });
         return new Response(JSON.stringify({ error: "AI Error: " + err.message }), { status: 500, headers: corsHeaders });
       }
     }
