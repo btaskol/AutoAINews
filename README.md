@@ -1,45 +1,43 @@
-# 📰 News Aggregator with AI
+# Brief
 
-A personal news aggregation platform that consolidates multiple RSS feeds, uses AI to summarize articles, and allows you to ask questions about news content.
+Brief is a Chrome extension and web dashboard for saving useful web content, getting grounded AI summaries in a selected language, and finding or sharing the result later.
 
-## Features
+## Product documentation
 
-- ✅ Aggregate news from multiple RSS feeds
-- ✅ AI-powered article summarization (powered by Grok)
-- ✅ Interactive Q&A with articles
-- ✅ Clean, responsive dashboard
-- ✅ Cloudflare Workers backend
-- ✅ No database needed
+- [Architecture and session policy](docs/ARCHITECTURE.md)
+- [Release and operations guide](docs/RELEASE_AND_OPERATIONS.md)
+- [Pricing, limits, costs, and estimated contribution margin](PRICING_AND_LIMITS.md)
+- [Product backlog](PRODUCT_BACKLOG.md)
 
-## Tech Stack
+## Current public beta
 
-- **Backend**: Cloudflare Workers
-- **Frontend**: HTML, CSS, JavaScript
-- **AI**: Grok API (Groq)
-- **Hosting**: Cloudflare Pages (Dashboard) + Cloudflare Workers (Backend)
+- Beta dashboard: `https://beta.brieflykeep.com`
+- Early-access offer: 25 summaries per calendar month at no cost.
+- Payments are deliberately disabled in Beta. The proposed production plans are documented in `PRICING_AND_LIMITS.md` and must not be shown as live until Stripe, tax, webhooks, and end-to-end payment tests are ready.
+- The prepared Chrome Web Store package is Brief 1.0.10. Package upload and store publication are separate from deploying the Worker.
 
-## Setup
+## Repository layout
 
-### Prerequisites
+| Path | Purpose |
+| --- | --- |
+| `extension-demo-beta/` | Chrome Web Store extension source. |
+| `extension-demo-dev/` | Development-only extension source, loaded unpacked. |
+| `news-aggregator-worker/src/index.js` | Cloudflare Worker: API, sign-in, dashboard, quota enforcement, and server-rendered pages. |
+| `news-aggregator-worker/migrations/` | D1 schema migrations. |
+| `news-aggregator-worker/wrangler.dev.json` | Development Worker configuration. |
+| `news-aggregator-worker/wrangler.beta.json` | Public Beta Worker configuration. |
+| `docs/` | Architecture, release, and operating documentation. |
 
-- GitHub account
-- Cloudflare account
-- Grok API key from https://console.groq.com/
+## Required authentication safety check
 
-### Installation
+The dashboard's direct Google sign-in page includes generated browser JavaScript. Before deploying authentication-page changes, run:
 
-1. Clone this repository
-2. Deploy Worker to Cloudflare
-3. Deploy Dashboard to Cloudflare Pages
-4. Set up Grok API key in Cloudflare secrets
+```bash
+cd news-aggregator-worker
+npm run test:auth-page
+```
 
-## TODO
-
-- [ ] Add user preferences for news categories
-- [ ] Store summarization history
-- [ ] Add email notifications
-- [ ] Build mobile app
-- [ ] Add more AI models
+This verifies that the generated scripts parse, preventing the dashboard from becoming stuck on “Signing in…”. Follow the complete release checklist in [docs/RELEASE_AND_OPERATIONS.md](docs/RELEASE_AND_OPERATIONS.md).
 
 ## License
 
