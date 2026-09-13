@@ -41,6 +41,7 @@ For every idea: make the smallest testable version in development, test it with 
 | Sharing / collections | Potentially valuable for teams, but introduces permissions and collaboration design. | Validate that people try to share exports or links first. |
 | Dedicated admin console | Useful once operational tools change often or multiple admins work concurrently. | Keep it inside the main Worker until that becomes a real constraint. |
 | Advanced analytics | Valuable at scale, but custom dashboards too early can become maintenance work. | Start with a few product events in an analytics service. |
+| Native mobile Share Sheet capture | Mobile-first users need to summarize an article from the phone's Share menu, not copy a link into another website. | Validate demand with early users first. Then build a small iOS/iPadOS app extension that appears as **Brief** in the Share Sheet, accepts shared webpage/text content, signs in to the existing Brief account, and saves to the same library. Add Android Share Sheet support after the iOS flow is proven. | At least several early users say mobile capture is a repeated blocker; a meaningful portion of invited testers complete a first shared capture and return to use it again. |
 | General task manager | Risks making Brief unclear and competing with mature task apps. | Only expand from capture-linked follow-ups after proven use. |
 
 ## Business ownership and account migration — before hiring, external funding, or meaningful recurring revenue
