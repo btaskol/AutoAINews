@@ -668,7 +668,6 @@ function renderUI(context) {
             if (res?.success) {
               statusDiv.style.color = "#059669";
               statusDiv.innerText = "Saved to Dashboard";
-              if (res.prompt) setTimeout(() => showProductPrompt(res.prompt), 700);
             } else {
               statusDiv.style.color = "#dc2626";
               statusDiv.innerText = res?.error || "Save failed.";
