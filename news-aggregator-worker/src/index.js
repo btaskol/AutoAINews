@@ -6,6 +6,9 @@ const corsHeaders = {
 
 const htmlHeaders = {
   "Content-Type": "text/html; charset=utf-8",
+  // Authentication and dashboard HTML contains user-specific state. Never let
+  // a browser reuse an older callback page after a Worker deployment.
+  "Cache-Control": "no-store, max-age=0",
   ...corsHeaders
 };
 
