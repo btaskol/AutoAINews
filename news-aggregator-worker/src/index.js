@@ -488,6 +488,52 @@ async function verifyGoogleToken(googleIdToken) {
   }
 }
 
+async function createGoogleSession(googleToken, env) {
+  const googleUser = await verifyGoogleToken(googleToken);
+  if (!googleUser) return { success: false, status: 401, error: 'Invalid Google Token' };
+  if (!await isEnvironmentAccessAllowed(env, googleUser.email)) {
+    return { success: false, status: 403, error: 'This environment is invitation-only. Ask the Brief team for access.' };
+  }
+
+  // The temporary read-only environment deliberately uses the short-lived
+  // Google identity token and never writes a session to its source database.
+  if (env.READ_ONLY === 'true') {
+    const dbUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(googleUser.sub).first();
+    const trialRecord = await env.DB.prepare('SELECT * FROM used_trials WHERE email = ?').bind(googleUser.email).first();
+    const trialInfo = calculateTrial(dbUser || googleUser, trialRecord);
+    return {
+      success: true,
+      user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, role: dbUser?.role || 'user', trial: trialInfo },
+      sessionToken: googleToken,
+      cookie: null
+    };
+  }
+
+  const sessionToken = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare('INSERT INTO used_trials (email) VALUES (?) ON CONFLICT(email) DO NOTHING').bind(googleUser.email).run().catch(() => {});
+  await env.DB.prepare(`
+    INSERT INTO users (id, email, name, picture, last_active_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      email = excluded.email,
+      name = excluded.name,
+      picture = excluded.picture,
+      last_active_at = CURRENT_TIMESTAMP
+  `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
+  await env.DB.prepare('INSERT INTO user_sessions (token, user_id, expires_at, last_seen_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)')
+    .bind(sessionToken, googleUser.sub, expiresAt).run();
+
+  const dbUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(googleUser.sub).first();
+  const trialRecord = await env.DB.prepare('SELECT * FROM used_trials WHERE email = ?').bind(googleUser.email).first();
+  return {
+    success: true,
+    user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, role: dbUser?.role || 'user', trial: calculateTrial(dbUser, trialRecord) },
+    sessionToken,
+    cookie: briefSessionCookie(sessionToken)
+  };
+}
+
 async function verifyTokenOrSession(authHeader, env) {
   if (!authHeader) return null;
   const token = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader;
@@ -737,41 +783,23 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
           if (idToken) {
             const existingSessionToken = safeStorageGet('sessionToken');
             function finishGoogleSignIn() {
-            const authController = new AbortController();
-            const authTimeout = window.setTimeout(() => authController.abort(), 15000);
-            fetch('/api/auth/google', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ googleToken: idToken }),
-              signal: authController.signal
-            })
-            .then(async res => {
-              const data = await res.json().catch(() => ({}));
-              if (!res.ok) throw new Error(data.error || 'Sign-in failed (' + res.status + ').');
-              return data;
-            })
-            .then(data => {
-              if (data.success && data.sessionToken) {
-                // The server has already set a secure cookie. Browser storage is
-                // convenient but must not block the post-Google redirect on a
-                // phone with restricted storage.
-                safeStorageSet('sessionToken', data.sessionToken);
-                window.location.replace(dashboardUrlWithToken(data.sessionToken));
-              } else {
-                showAuthFailure("Authentication failed: " + (data.error || "Please try again."));
-                safeStorageRemove('sessionToken');
-              }
-            })
-            .catch(err => {
-              const message = err.name === 'AbortError'
-                ? 'Sign-in is taking too long. Check your connection and try again.'
-                : 'Connection error: ' + err.message;
-              showAuthFailure(message);
-              safeStorageRemove('sessionToken');
-            })
-            .finally(() => {
-              window.clearTimeout(authTimeout);
-            });
+              // Use a same-origin form navigation rather than an in-page
+              // background request. This is the browser equivalent of the
+              // extension's successful authenticated handoff.
+              const form = document.createElement('form');
+              form.method = 'POST';
+              form.action = '/auth/callback';
+              const tokenField = document.createElement('input');
+              tokenField.type = 'hidden';
+              tokenField.name = 'googleToken';
+              tokenField.value = idToken;
+              const returnField = document.createElement('input');
+              returnField.type = 'hidden';
+              returnField.name = 'returnPath';
+              returnField.value = returnPathFromState();
+              form.append(tokenField, returnField);
+              document.body.append(form);
+              form.submit();
             }
 
             // A second tab can receive a fresh Google callback while another
@@ -1005,76 +1033,27 @@ export default {
     if (url.pathname === "/api/auth/google" && req.method === "POST") {
       try {
         const { googleToken } = await req.json();
-        const googleUser = await verifyGoogleToken(googleToken);
-
-        if (!googleUser) return new Response(JSON.stringify({ error: "Invalid Google Token" }), { status: 401, headers: corsHeaders });
-        if (!await isEnvironmentAccessAllowed(env, googleUser.email)) {
-          return new Response(JSON.stringify({ error: "This environment is invitation-only. Ask the Brief team for access." }), { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } });
-        }
-
-        // In the temporary environment, verify Google identity without changing
-        // the production user record or replacing its normal session token.
-        // Google ID tokens are already accepted by verifyTokenOrSession and expire
-        // quickly, making this appropriate only for a read-only test dashboard.
-        if (env.READ_ONLY === "true") {
-          const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
-          const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(googleUser.email).first();
-          const trialInfo = calculateTrial(dbUser || googleUser, trialRecord);
-
-          return new Response(JSON.stringify({
-            success: true,
-            user: {
-              id: googleUser.sub,
-              email: googleUser.email,
-              name: googleUser.name,
-              picture: googleUser.picture,
-              role: dbUser?.role || 'user',
-              trial: trialInfo
-            },
-            sessionToken: googleToken
-          }), { headers: { "Content-Type": "application/json", ...corsHeaders } });
-        }
-
-        const appSessionToken = crypto.randomUUID();
-        const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-        try {
-          await env.DB.prepare(`
-            INSERT INTO used_trials (email) VALUES (?)
-            ON CONFLICT(email) DO NOTHING
-          `).bind(googleUser.email).run();
-        } catch (e) {}
-
-        await env.DB.prepare(`
-          INSERT INTO users (id, email, name, picture, last_active_at)
-          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(id) DO UPDATE SET
-            email = excluded.email,
-            name = excluded.name,
-            picture = excluded.picture,
-            last_active_at = CURRENT_TIMESTAMP
-        `).bind(googleUser.sub, googleUser.email, googleUser.name, googleUser.picture).run();
-        await env.DB.prepare(`
-          INSERT INTO user_sessions (token, user_id, expires_at, last_seen_at)
-          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        `).bind(appSessionToken, googleUser.sub, sessionExpiresAt).run();
-
-        const dbUser = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(googleUser.sub).first();
-        const trialRecord = await env.DB.prepare("SELECT * FROM used_trials WHERE email = ?").bind(googleUser.email).first();
-        const trialInfo = calculateTrial(dbUser, trialRecord);
-
-        return new Response(JSON.stringify({
-          success: true,
-          user: { id: googleUser.sub, email: googleUser.email, name: googleUser.name, picture: googleUser.picture, role: dbUser?.role || 'user', trial: trialInfo },
-          sessionToken: appSessionToken
-        }), {
-          // Set the server session as well as returning the token to the page.
-          // This keeps the dashboard reachable if browser storage or the client
-          // redirect is interrupted after Google returns to Brief.
-          headers: { "Content-Type": "application/json", ...corsHeaders, 'Set-Cookie': briefSessionCookie(appSessionToken) }
+        const result = await createGoogleSession(googleToken, env);
+        if (!result.success) return new Response(JSON.stringify({ error: result.error }), { status: result.status, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        return new Response(JSON.stringify({ success: true, user: result.user, sessionToken: result.sessionToken }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders, ...(result.cookie ? { 'Set-Cookie': result.cookie } : {}) }
         });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Auth Error: " + err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    if (url.pathname === '/auth/callback' && req.method === 'POST') {
+      try {
+        const form = await req.formData();
+        const result = await createGoogleSession(String(form.get('googleToken') || ''), env);
+        if (!result.success) return new Response(renderMinimalAuthPage(origin, `Authentication failed: ${result.error}`, true, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
+        const target = safeAppReturnPath(String(form.get('returnPath') || '/dashboard'));
+        const destination = new URL(target, origin);
+        destination.searchParams.set('token', result.sessionToken);
+        return new Response(null, { status: 303, headers: { Location: `${destination.pathname}${destination.search}`, ...(result.cookie ? { 'Set-Cookie': result.cookie } : {}) } });
+      } catch (err) {
+        return new Response(renderMinimalAuthPage(origin, 'Authentication failed. Please try again.', true, env.CHROME_WEB_STORE_URL, env), { headers: htmlHeaders });
       }
     }
 
