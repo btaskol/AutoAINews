@@ -859,7 +859,7 @@ function renderLegalPage(origin, page) {
     <h2>How we use it</h2>
     <p>We use this information to authenticate you, create and store your personal library, generate requested summaries, apply plan limits, provide support, protect the service from abuse, and improve Brief from optional feedback. We do not sell personal information or use saved content for advertising. Brief’s use of information received from Google APIs adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements.</p>
     <h2>Service providers and sharing</h2>
-    <p>Brief uses <strong>Google</strong> for sign-in, <strong>Cloudflare</strong> to run the service and store application data, and <strong>Groq</strong> to generate a summary when you ask for one. The text and title you submit for a summary, plus your selected output language, are sent to Groq for that purpose. We share information only with providers needed to operate Brief, to comply with law, or to protect against fraud or abuse.</p>
+    <p>Brief uses <strong>Google</strong> for sign-in, <strong>Cloudflare</strong> to run the service and store application data, and <strong>Groq</strong> to generate a summary when you ask for one. The text and title you submit for a summary, plus your selected output language, are sent to Groq for that purpose. Cloudflare technical request logs may process approximate location information derived from an IP address, such as country, region, or city, for security, reliability, and abuse prevention. Brief does not use this information for profiling or product analytics. We share information only with providers needed to operate Brief, to comply with law, or to protect against fraud or abuse.</p>
     <h2>Storage and retention</h2>
     <p>Your saved content remains in your library until you delete it or delete your account. You can delete individual captures from the dashboard. Deleting your account removes your account profile, saved captures, tags, notes, feedback, reports, usage records, and associated stored snapshots. We may retain a minimal record, such as an email used for a free entitlement, where necessary to enforce limits, prevent abuse, or meet legal obligations.</p>
     <h2>Your choices and rights</h2>
@@ -2564,6 +2564,13 @@ export default {
       for (const row of results) {
         if (row.snapshot_key) await env.SNAPSHOTS.delete(row.snapshot_key);
       }
+      // Remove records that are not guaranteed to disappear through a foreign-key
+      // cascade. This includes feedback, event rows, and every public link the
+      // person created, together with its recipient-save rows.
+      await env.DB.prepare("DELETE FROM summary_feedback WHERE user_id = ?").bind(user.id).run();
+      await env.DB.prepare("DELETE FROM product_events WHERE user_id = ? OR share_token IN (SELECT token FROM public_share_links WHERE owner_user_id = ?)").bind(user.id, user.id).run();
+      await env.DB.prepare("DELETE FROM public_share_link_saves WHERE user_id = ? OR share_token IN (SELECT token FROM public_share_links WHERE owner_user_id = ?)").bind(user.id, user.id).run();
+      await env.DB.prepare("DELETE FROM public_share_links WHERE owner_user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM feedback_review_status WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM user_product_feedback WHERE user_id = ?").bind(user.id).run();
       await env.DB.prepare("DELETE FROM user_reports WHERE user_id = ?").bind(user.id).run();

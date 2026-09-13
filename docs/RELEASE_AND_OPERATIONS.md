@@ -94,6 +94,7 @@ Before submitting an extension update, verify that the public Privacy Policy acc
 - Brief stores saved library data a user chooses to save;
 - aggregate product events and safe failure categories may be used to improve reliability;
 - Brief does not add raw saved content, URLs, search queries, age, gender, or location to product analytics;
+- Cloudflare technical request logs may process approximate IP-derived location for security, reliability, and abuse prevention, but Brief does not use it for profiling or product analytics;
 - users can find support and account-deletion information.
 
 If the code, analytics, collected data, or permissions change, update the privacy disclosure, the Worker legal page, and the Chrome Web Store privacy form in the same release.

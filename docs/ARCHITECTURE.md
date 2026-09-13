@@ -96,6 +96,7 @@ R2 holds saved snapshot assets. D1 holds the application records and does not re
 ## Privacy and security boundaries
 
 - Raw page content, URLs, search queries, age, gender, and location are not written to product analytics.
+- Cloudflare technical request logs may process approximate IP-derived location for security, reliability, and abuse prevention. It is not used for profiling or product analytics.
 - Product analytics are aggregate product events. Summary failure diagnostics retain safe categories rather than raw provider errors or saved content.
 - Private dashboard and API routes require a verified Brief session or verified identity handoff.
 - Roles are checked server-side. Admin and reviewer capabilities must never be hidden only in the interface; authorization is enforced by the Worker.
