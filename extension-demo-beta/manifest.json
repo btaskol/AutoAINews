@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Brief",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl9FNSm5sgXjL2b2+DpYYtsesSsqNTXbniqLvhBT/MYYinxXvxhLttHLVq68uZczlCp1rEtRUEIbTpLjh9Gk1Fz9AD+VNKCb1ikwSylVBB9y18XuaUUuPvN+BTsSV/Uer0MU4pQ4kqct7LStisar5n6V3zHwLOwuHVq0uV7s5vmyaAX26w7TpVr5B2XqZ0QozunbVVWQ2UTY/Jr5QBR0FxWAiOCy0vSC/N+2UrSKgjKuqzZ7XIlAyhgTQ+4MuWIUqHM5b0tvdJpS5jYGjOWaIepNG0AcJNNh/OBmqcFEfCdK76p2K/DjbeZBcYEkD7WsJUucBTksbMvqc7CSNChyPpwIDAQAB",
   "description": "Public beta of Brief: save web pages, get grounded summaries, and build a searchable library.",
   "permissions": [

@@ -1,5 +1,24 @@
 const GOOGLE_CLIENT_ID = "726105967128-hpv2tes67ad9m4iflgea1crc8lp9oohj.apps.googleusercontent.com";
 const API_BASE = "https://dev.brieflykeep.com";
+const SUMMARY_FEEDBACK_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
+const SUMMARY_FEEDBACK_STORAGE_KEY = "summaryFeedbackPromptState";
+
+// Ask after the third successful summary, then after ten further summaries,
+// but never more frequently than once every fourteen days in this browser.
+function planSummaryFeedbackPrompt(callback) {
+  chrome.storage.local.get({ [SUMMARY_FEEDBACK_STORAGE_KEY]: {} }, (stored) => {
+    const previous = stored[SUMMARY_FEEDBACK_STORAGE_KEY] || {};
+    const successfulSummaries = Math.max(0, Number(previous.successfulSummaries) || 0) + 1;
+    const nextPromptAt = Math.max(3, Number(previous.nextPromptAt) || 3);
+    const lastPromptAt = Math.max(0, Number(previous.lastPromptAt) || 0);
+    const now = Date.now();
+    const shouldShow = successfulSummaries >= nextPromptAt && (!lastPromptAt || now - lastPromptAt >= SUMMARY_FEEDBACK_INTERVAL_MS);
+    const nextState = shouldShow
+      ? { successfulSummaries, nextPromptAt: successfulSummaries + 10, lastPromptAt: now }
+      : { successfulSummaries, nextPromptAt, lastPromptAt };
+    chrome.storage.local.set({ [SUMMARY_FEEDBACK_STORAGE_KEY]: nextState }, () => callback(shouldShow));
+  });
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -528,9 +547,10 @@ function renderUI(context) {
     body.innerHTML = `<div style="color:#6b7280;font-size:12px;padding:8px 0;">Generating summary...</div>`;
     chrome.runtime.sendMessage({ action: "FETCH_SUMMARY", pageText: context.pageText, pageTitle: context.title, summaryLanguage, summaryMode, sourceSections: context.sourceSections }, (data) => {
       if (data?.summary) {
-        body.innerHTML = `
+        planSummaryFeedbackPrompt((showSummaryFeedback) => {
+          body.innerHTML = `
           <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:10px;color:#374151;line-height:1.6;font-size:12px;">${escapeHtml(data.summary).replace(/\n/g, '<br>')}</div>
-          <div id="ai-summary-feedback" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:9px 10px;margin-bottom:10px;color:#4b5563;font-size:12px;">Was this summary helpful? <button id="ai-summary-helpful" style="background:#fff;border:1px solid #d1d5db;border-radius:5px;color:#374151;cursor:pointer;font-size:12px;margin-left:5px;padding:4px 7px;">Yes</button><button id="ai-summary-not-helpful" style="background:#fff;border:1px solid #d1d5db;border-radius:5px;color:#374151;cursor:pointer;font-size:12px;margin-left:4px;padding:4px 7px;">No</button></div>
+          ${showSummaryFeedback ? '<div id="ai-summary-feedback" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:9px 10px;margin-bottom:10px;color:#4b5563;font-size:12px;">Was this summary helpful? <button id="ai-summary-helpful" style="background:#fff;border:1px solid #d1d5db;border-radius:5px;color:#374151;cursor:pointer;font-size:12px;margin-left:5px;padding:4px 7px;">Yes</button><button id="ai-summary-not-helpful" style="background:#fff;border:1px solid #d1d5db;border-radius:5px;color:#374151;cursor:pointer;font-size:12px;margin-left:4px;padding:4px 7px;">No</button></div>' : ''}
           <div style="display:flex;gap:8px;margin-bottom:8px;">
             <button id="ai-copy-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Copy summary</button>
             <button id="ai-share-btn" style="flex:1;padding:8px;background:#ffffff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:500;cursor:pointer;font-size:12px;">Share</button>
@@ -556,8 +576,8 @@ function renderUI(context) {
             feedback.innerText = res?.success ? "Thank you — this helps improve Brief." : (res?.error || "Could not send feedback.");
           });
         };
-        document.getElementById("ai-summary-helpful").onclick = () => submitSummaryFeedback(true);
-        document.getElementById("ai-summary-not-helpful").onclick = () => {
+        if (showSummaryFeedback) document.getElementById("ai-summary-helpful").onclick = () => submitSummaryFeedback(true);
+        if (showSummaryFeedback) document.getElementById("ai-summary-not-helpful").onclick = () => {
           const feedback = document.getElementById("ai-summary-feedback");
           feedback.innerHTML = `<div style="margin-bottom:6px;">What could be better? <span style="color:#6b7280;">(optional)</span></div><textarea id="ai-summary-feedback-comment" rows="2" maxlength="1200" style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:5px;font:inherit;font-size:12px;padding:6px;resize:none;"></textarea><button id="ai-summary-feedback-send" style="background:#111827;border:0;border-radius:5px;color:#fff;cursor:pointer;font-size:12px;margin-top:6px;padding:6px 8px;">Send feedback</button><button id="ai-summary-feedback-skip" style="background:none;border:0;color:#6b7280;cursor:pointer;font-size:12px;margin-left:6px;">Skip</button>`;
           document.getElementById("ai-summary-feedback-send").onclick = () => submitSummaryFeedback(false, document.getElementById("ai-summary-feedback-comment").value.trim());
@@ -674,6 +694,7 @@ function renderUI(context) {
             }
           });
         };
+        });
       } else {
         body.innerHTML = `<div style="color:#dc2626;font-size:12px;">${escapeHtml(data?.error || "Error generating summary.")}</div>`;
       }

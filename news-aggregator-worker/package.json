@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "deploy": "wrangler deploy",
-    "test:auth-page": "node tests/auth-page.test.js"
+    "test:auth-page": "node tests/auth-page.test.js",
+    "test:feedback-schedule": "node tests/summary-feedback-schedule.test.js"
   },
   "keywords": ["cloudflare", "worker", "ai", "news"],
   "author": "",
