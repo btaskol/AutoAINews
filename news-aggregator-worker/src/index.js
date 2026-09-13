@@ -745,9 +745,11 @@ function renderMinimalAuthPage(origin, message = "", clearStorage = false, chrom
         function loadDashboardAfterSignIn() {
           if (!window.location.hash.includes('id_token=')) window.location.replace('/dashboard');
         }
-        briefSessionChannel?.addEventListener('message', event => {
-          if (event.data?.type === 'signed_in') loadDashboardAfterSignIn();
-        });
+        if (briefSessionChannel) {
+          briefSessionChannel.addEventListener('message', event => {
+            if (event.data && event.data.type === 'signed_in') loadDashboardAfterSignIn();
+          });
+        }
         window.addEventListener('storage', event => {
           if (event.key === 'brief-session-signed-in' && event.newValue) loadDashboardAfterSignIn();
         });
