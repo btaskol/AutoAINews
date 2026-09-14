@@ -201,7 +201,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ googleToken: idToken })
         });
-        const data = await res.json();
+        const responseText = await res.text();
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          throw new Error(`Brief returned an invalid sign-in response (HTTP ${res.status}).`);
+        }
         if (data.success) {
           chrome.storage.local.set({ sessionToken: data.sessionToken, user: data.user }, () => {
             syncDashboardLoginTabs(data.sessionToken, sourceTabId);
@@ -221,7 +227,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ error: data.error || "Authentication failed." });
         }
       } catch (err) {
-        sendResponse({ error: "Server offline." });
+        console.warn("Brief Google sign-in request failed.", err);
+        sendResponse({ error: "Could not complete sign-in with Brief. Check your connection and try again." });
       }
     });
     return true;

@@ -43,6 +43,10 @@ The matching Worker source limits each Groq model attempt to 25 seconds and retu
 
 Signing out now removes only authentication state. It retains harmless local preferences, including summary-language settings and the feedback-sampling schedule. This prevents a user from being asked repeatedly simply because they signed out.
 
+### Clearer sign-in failure message
+
+The previous extension treated every exception during the final sign-in request as “Server offline,” including a malformed response or a connection issue limited to one browser. Version 1.0.11 reports that sign-in could not be completed and asks the user to retry, while recording a browser-console warning for diagnosis. Server-provided authentication errors continue to be shown as their actual message.
+
 ## Technical corrections included
 
 The feedback prompt is rendered in a script Chrome injects into the active page. Chrome serializes that script and does not carry variables from the extension’s background worker into it. Version 1.0.11 keeps the prompt helper and its timing values inside the injected script, so the summary request is actually sent and a hidden JavaScript reference error cannot leave the panel on “Generating summary…”.
